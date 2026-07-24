@@ -210,13 +210,6 @@ export function RoomPage() {
     setFocusNodeId(null);
   }, []);
 
-  const switchChatToVoice = useCallback(() => {
-    closeChat();
-    if (!micActive && state !== "processing" && state !== "agent-speaking") {
-      void toggleMic();
-    }
-  }, [closeChat, micActive, state, toggleMic]);
-
   return (
     <div ref={rootRef} className="relative h-dvh overflow-hidden bg-[#073048] text-white">
       <RoomHubWebgl
@@ -438,7 +431,6 @@ export function RoomPage() {
                         micDisabled={chatBusy}
                         onSendText={handleSendText}
                         onClose={closeChat}
-                        onMicToggle={switchChatToVoice}
                       />
                     </div>
                   </div>

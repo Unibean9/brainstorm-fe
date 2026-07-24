@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Mic, Plus, Square, X } from "lucide-react";
+import { ArrowUp, Mic, Plus, Square, X } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 
 import { cn } from "@/lib/utils";
@@ -56,6 +56,8 @@ export function RoomChatBar({
     onSendText(trimmed);
     setValue("");
   };
+
+  const canSend = value.trim().length > 0 && !micDisabled;
 
   const resolvedPlaceholder =
     placeholder ??
@@ -121,15 +123,32 @@ export function RoomChatBar({
         className="no-scrollbar max-h-[7.5rem] min-h-6 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-1 py-2.5 text-sm leading-5 text-white outline-none placeholder:text-white/42 disabled:opacity-50 [&::-webkit-scrollbar]:hidden"
       />
 
-      <button
-        type="button"
-        onClick={onMicToggle}
-        disabled={micDisabled || !onMicToggle}
-        aria-label="Chuyển sang voice"
-        className="mb-0.5 grid size-10 shrink-0 place-items-center rounded-full bg-white/10 text-white/75 transition-colors hover:bg-white/14 hover:text-white disabled:pointer-events-none disabled:opacity-40"
-      >
-        <Mic className="size-4.5 stroke-[1.75]" />
-      </button>
+      {isSession ? (
+        <button
+          type="button"
+          onClick={handleSend}
+          disabled={!canSend}
+          aria-label="Gửi tin nhắn"
+          className={cn(
+            "mb-0.5 grid size-10 shrink-0 place-items-center rounded-full transition-colors",
+            canSend
+              ? "bg-cyan-300 text-[#060a14] hover:bg-cyan-200"
+              : "bg-white/10 text-white/35 disabled:pointer-events-none"
+          )}
+        >
+          <ArrowUp className="size-4.5 stroke-[2.25]" />
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={onMicToggle}
+          disabled={micDisabled || !onMicToggle}
+          aria-label="Chuyển sang voice"
+          className="mb-0.5 grid size-10 shrink-0 place-items-center rounded-full bg-white/10 text-white/75 transition-colors hover:bg-white/14 hover:text-white disabled:pointer-events-none disabled:opacity-40"
+        >
+          <Mic className="size-4.5 stroke-[1.75]" />
+        </button>
+      )}
 
       <button
         type="button"
