@@ -48,6 +48,13 @@ export type AgentAudioChunkPayload = StreamEnvelope<{
   isLast: boolean;
 }>;
 
+/** BE TTS xong — một file audio đầy đủ (không stream realtime) */
+export type AgentAudioReadyPayload = StreamEnvelope<{
+  messageId: string;
+  encoding: "audio/mpeg" | "audio/wav" | "audio/webm";
+  audioBase64: string;
+}>;
+
 export type AgentAudioCompletedPayload = StreamEnvelope<{
   messageId: string;
 }>;

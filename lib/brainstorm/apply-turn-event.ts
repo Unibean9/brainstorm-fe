@@ -5,6 +5,7 @@ import type { AgentAudioPlayer } from "@/lib/audio/agent-audio-player";
 import type {
   AgentAudioChunkPayload,
   AgentAudioCompletedPayload,
+  AgentAudioReadyPayload,
   AgentRunFailedPayload,
   AgentRunStartedPayload,
   AgentTextCompletedPayload,
@@ -124,6 +125,19 @@ export function applyTurnStreamEvent(
         next[idx] = entry;
         return next;
       });
+      break;
+    }
+    case "agent-audio": {
+      const { data } = envelope as AgentAudioReadyPayload;
+      ctx.setState("agent-speaking");
+      void ctx.audio
+        .playOnce({
+          chunkBase64: data.audioBase64,
+          encoding: data.encoding,
+        })
+        .then(() => {
+          ctx.setState("idle");
+        });
       break;
     }
     case "audio-chunk": {

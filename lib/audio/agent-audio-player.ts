@@ -49,6 +49,12 @@ export class AgentAudioPlayer {
     this.objectUrls = [];
   }
 
+  /** Một file TTS hoàn chỉnh từ BE — phát xong resolve */
+  playOnce(chunk: AudioChunkInput): Promise<void> {
+    this.stop();
+    return this.playChunk(chunk);
+  }
+
   private playChunk(chunk: AudioChunkInput): Promise<void> {
     const bytes = decodeBase64(chunk.chunkBase64);
     const mime = mimeFor(chunk.encoding, chunk.sampleRate);

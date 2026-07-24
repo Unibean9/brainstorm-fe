@@ -4,9 +4,13 @@ Base URL: `NEXT_PUBLIC_API_URL` (default `http://localhost:8080/`)
 
 Auth: `Authorization: Bearer {accessToken}`
 
-FE dùng **axios** (REST) + **TanStack Query** (cache) + **`fetch` SSE** (stream text + audio trong một response).
+FE dùng **axios** (REST) + **TanStack Query** (cache) + **`fetch` SSE** (stream text + metadata trong một response).
 
 **Không dùng SignalR** cho luồng agent. **Không mock** — mọi dữ liệu phiên từ BE.
+
+**Text agent (chat panel):** stream qua **`text-delta`** — FE cộng dồn từng đoạn vào bubble realtime. Kết thúc bằng **`text-done`**.
+
+**TTS (BE → FE):** BE render **một file audio hoàn chỉnh** (mp3/webm) — event **`agent-audio`**, FE phát một lần (không stream audio).
 
 `sessionId` được lưu `localStorage` (`brainstorm_session_id`) để reload trang → `GET /sessions/{id}`.
 
@@ -160,10 +164,11 @@ data: {json envelope}
 | `state` | `{ state: "idle" \| "listening" \| "processing" \| "agent-speaking" }` | HUD orb |
 | `user-transcript-final` | `{ clientTurnId, messageId, text, phaseKey? }` | STT xong (voice) |
 | `agent-run-started` | `{ messageId, replyToMessageId? }` | Bắt đầu agent reply |
-| `text-delta` | `{ messageId, delta }` | Stream token |
-| `text-done` | `{ messageId, text, phaseKey? }` | Text hoàn chỉnh — **không** đánh dấu ring |
-| `audio-chunk` | `{ messageId, encoding, sampleRate?, chunkBase64, isLast }` | TTS chunk — FE play ngay |
-| `audio-done` | `{ messageId }` | Hết audio — **không** đánh dấu ring |
+| `text-delta` | `{ messageId, delta }` | **Stream text chat** — FE cộng dồn vào bubble agent |
+| `text-done` | `{ messageId, text, phaseKey? }` | Text hoàn chỉnh — chốt message (nên gửi sau các delta) |
+| **`agent-audio`** | **`{ messageId, encoding, audioBase64 }`** | **TTS xong — một file audio đầy đủ, FE phát** |
+| `audio-chunk` | `{ messageId, encoding, chunkBase64, isLast }` | *(legacy)* — FE vẫn hỗ trợ; BE MVP dùng `agent-audio` |
+| `audio-done` | `{ messageId }` | *(optional)* marker sau audio — FE tự `idle` khi phát xong |
 | **`engine-step`** | **`{ step: 0-7, focusNodeId? }`** | **Đánh dấu 8 node — bắt buộc MVP** |
 | `error` | `{ code, message, messageId? }` | Lỗi |
 
@@ -215,14 +220,8 @@ data: {"sessionId":"sess-1","turnId":"turn-1","ts":1719840001810,"data":{"step":
 event: text-done
 data: {"sessionId":"sess-1","turnId":"turn-1","ts":1719840001900,"data":{"messageId":"amsg-1","text":"Ghi nhận rồi — …","phaseKey":"Explore"}}
 
-event: audio-chunk
-data: {"sessionId":"sess-1","turnId":"turn-1","ts":1719840002000,"data":{"messageId":"amsg-1","encoding":"audio/mpeg","chunkBase64":"…","isLast":false}}
-
-event: audio-chunk
-data: {"sessionId":"sess-1","turnId":"turn-1","ts":1719840002100,"data":{"messageId":"amsg-1","encoding":"audio/mpeg","chunkBase64":"…","isLast":true}}
-
-event: audio-done
-data: {"sessionId":"sess-1","turnId":"turn-1","ts":1719840002200,"data":{"messageId":"amsg-1"}}
+event: agent-audio
+data: {"sessionId":"sess-1","turnId":"turn-1","ts":1719840002000,"data":{"messageId":"amsg-1","encoding":"audio/mpeg","audioBase64":"…"}}
 
 event: engine-step
 data: {"sessionId":"sess-1","turnId":"turn-1","ts":1719840002280,"data":{"step":6,"focusNodeId":"trace"}}
@@ -240,9 +239,12 @@ data: {"sessionId":"sess-1","turnId":"turn-1","ts":1719840002400,"data":{"state"
 2. `engine-step` 0 → 4 (orchestration)
 3. `agent-run-started` + `text-delta`…
 4. `state: agent-speaking` + `engine-step: 5`
-5. `text-done` + `audio-chunk`… + `audio-done`
-6. **`engine-step: 6` → `7` (agent xong / chốt insight)**
-7. `state: idle` + persist `engineStep: 7` trên session
+5. **`text-delta`…** (nhiều lần — chat hiện dần) + **`text-done`**
+6. **`agent-audio`** — một file TTS base64
+7. **`engine-step: 6` → `7` (agent xong / chốt insight)**
+8. `state: idle` + persist `engineStep: 7` trên session
+
+**TTS flow (BE):** agent sinh text → TTS engine render **full file** → emit **một** `agent-audio` → FE `HTMLAudioElement.play()` → xong thì FE `idle` (hoặc BE gửi thêm `state: idle`).
 
 Voice turn: BE nhận `audioBase64` → STT → emit `user-transcript-final` → cùng chuỗi agent events ở trên.
 
@@ -254,7 +256,7 @@ Listening (mic bật): `state: listening` + `engine-step: { step: 0, focusNodeId
 
 1. `POST /sessions` + `GET /sessions/{id}` — trả `engineStep` (0–7)
 2. `POST /sessions/{id}/turns` trả SSE
-3. Chat: `text-delta` + `text-done` + `audio-chunk` (TTS cùng lúc)
+3. Chat/voice turn: **`text-delta` + `text-done`** (stream chat) + **`agent-audio`** (một file TTS)
 4. `state` events sync HUD orb
 5. Voice: nhận `audioBase64`, STT → `user-transcript-final` → agent stream
 6. **`engine-step` mỗi lần orchestration đổi engine + khi agent xong (step 6–7)**
@@ -274,6 +276,6 @@ Listening (mic bật): `state: listening` + `engine-step: { step: 0, focusNodeId
 | `lib/brainstorm/consume-sse-stream.ts` | SSE parser |
 | `lib/brainstorm/apply-turn-event.ts` | Map event → UI (`engine-step` → ring) |
 | `lib/brainstorm/brainstorm-query-keys.ts` | TanStack Query keys |
-| `lib/audio/agent-audio-player.ts` | Play `audio-chunk` |
+| `lib/audio/agent-audio-player.ts` | Play **`agent-audio`** (một file) |
 
 Env mẫu: `.env.example`
