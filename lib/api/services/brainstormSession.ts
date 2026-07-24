@@ -5,56 +5,41 @@ import type {
   PostBrainstormTurnRequest,
 } from "@/types/brainstorm-stream";
 
-import { getAuthToken } from "../core";
+import apiService, { getAuthToken } from "../core";
 
 const BASE = "api/v1/brainstorm/sessions";
 
 function apiBaseUrl() {
-  return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080/";
+  const url = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080/";
+  return url.endsWith("/") ? url : `${url}/`;
 }
 
 export const brainstormSessionApi = {
   create: async (
     body: CreateBrainstormSessionRequest = {}
   ): Promise<BrainstormSessionSnapshot> => {
-    const token = getAuthToken();
-    const res = await fetch(new URL(BASE, apiBaseUrl()), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify({ locale: "vi-VN", ...body }),
+    const response = await apiService.post<ApiResponse<BrainstormSessionSnapshot>>(BASE, {
+      locale: "vi-VN",
+      ...body,
     });
-    if (!res.ok) throw new Error(`Create session failed (${res.status})`);
-    const json = (await res.json()) as ApiResponse<BrainstormSessionSnapshot>;
-    return json.data;
+    return response.data.data;
   },
 
   get: async (sessionId: string): Promise<BrainstormSessionSnapshot> => {
-    const token = getAuthToken();
-    const res = await fetch(new URL(`${BASE}/${sessionId}`, apiBaseUrl()), {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-    if (!res.ok) throw new Error(`Get session failed (${res.status})`);
-    const json = (await res.json()) as ApiResponse<BrainstormSessionSnapshot>;
-    return json.data;
+    const response = await apiService.get<ApiResponse<BrainstormSessionSnapshot>>(
+      `${BASE}/${sessionId}`
+    );
+    return response.data.data;
   },
 
   updateVoice: async (sessionId: string, voiceId: string): Promise<void> => {
-    const token = getAuthToken();
-    const res = await fetch(new URL(`${BASE}/${sessionId}/voice`, apiBaseUrl()), {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify({ voiceId }),
-    });
-    if (!res.ok) throw new Error(`Update voice failed (${res.status})`);
+    await apiService.patch(`${BASE}/${sessionId}/voice`, { voiceId });
   },
 
-  /** POST turn → SSE stream (text + audio events trong một response) */
+  /**
+   * SSE turn stream — dùng `fetch` (ReadableStream) thay vì axios.
+   * REST còn lại qua axios + interceptors (auth refresh).
+   */
   postTurnStream: async (
     sessionId: string,
     body: PostBrainstormTurnRequest,

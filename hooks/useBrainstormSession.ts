@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import type { TranscriptEntry } from "@/app/session/data/room-graph-types";
 import type { WorkflowNodeId } from "@/app/session/components/room-orb-layout";
@@ -11,22 +11,23 @@ import { brainstormKeys } from "@/lib/brainstorm/brainstorm-query-keys";
 import { clampEngineStep } from "@/lib/brainstorm/engine-steps";
 import { consumeSseStream } from "@/lib/brainstorm/consume-sse-stream";
 import {
-  createMockSessionDriver,
-  isBrainstormMockMode,
-} from "@/lib/brainstorm/mock-session-driver";
+  clearStoredSessionId,
+  readStoredSessionId,
+  writeStoredSessionId,
+} from "@/lib/brainstorm/session-storage";
 import { brainstormSessionApi } from "@/lib/api/services/brainstormSession";
-import type { BrainstormSessionState } from "@/types/brainstorm-stream";
+import {
+  hydrateBrainstormSessionCache,
+  useBrainstormTranscriptQuery,
+  useCreateBrainstormSessionMutation,
+  useResumeBrainstormSessionMutation,
+} from "@/hooks/queries/useBrainstormSessionQueries";
+import type { BrainstormSessionSnapshot, BrainstormSessionState } from "@/types/brainstorm-stream";
 
-export type BrainstormConnectionStatus =
-  | "idle"
-  | "connecting"
-  | "connected"
-  | "mock"
-  | "error";
+export type BrainstormConnectionStatus = "idle" | "connecting" | "connected" | "error";
 
 type UseBrainstormSessionOptions = {
   enabled: boolean;
-  initialTranscript?: TranscriptEntry[];
 };
 
 function formatTime(ts = Date.now()) {
@@ -36,10 +37,21 @@ function formatTime(ts = Date.now()) {
   });
 }
 
-export function useBrainstormSession({
-  enabled,
-  initialTranscript = [],
-}: UseBrainstormSessionOptions) {
+function applySnapshotToUi(
+  snapshot: BrainstormSessionSnapshot,
+  setters: {
+    setSessionId: (id: string) => void;
+    setEngineStep: (step: number) => void;
+    setState: (state: BrainstormSessionState) => void;
+  }
+) {
+  writeStoredSessionId(snapshot.sessionId);
+  setters.setSessionId(snapshot.sessionId);
+  setters.setEngineStep(clampEngineStep(snapshot.engineStep));
+  setters.setState(snapshot.state);
+}
+
+export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
   const queryClient = useQueryClient();
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [connectionStatus, setConnectionStatus] =
@@ -50,43 +62,31 @@ export function useBrainstormSession({
   const [focusNodeId, setFocusNodeId] = useState<WorkflowNodeId | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const mockRef = useRef<ReturnType<typeof createMockSessionDriver> | null>(null);
   const audioRef = useRef<AgentAudioPlayer | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const turnAbortRef = useRef<AbortController | null>(null);
   const startedRef = useRef(false);
 
-  const transcriptKey = sessionId
-    ? brainstormKeys.transcript(sessionId)
-    : brainstormKeys.transcript("pending");
+  const createSessionMutation = useCreateBrainstormSessionMutation();
+  const resumeSessionMutation = useResumeBrainstormSessionMutation();
 
-  const { data: transcript = initialTranscript } = useQuery({
-    queryKey: transcriptKey,
-    queryFn: () => initialTranscript,
-    enabled: Boolean(sessionId),
-    initialData: initialTranscript,
-    staleTime: Infinity,
-  });
+  const { data: transcript = [] } = useBrainstormTranscriptQuery(sessionId);
 
   const patchTranscript = useCallback(
     (updater: (prev: TranscriptEntry[]) => TranscriptEntry[]) => {
       if (!sessionId) return;
       queryClient.setQueryData<TranscriptEntry[]>(brainstormKeys.transcript(sessionId), (prev) =>
-        updater(prev ?? initialTranscript)
+        updater(prev ?? [])
       );
     },
-    [initialTranscript, queryClient, sessionId]
+    [queryClient, sessionId]
   );
 
   const ensureAudio = () => {
     if (!audioRef.current) audioRef.current = new AgentAudioPlayer();
     return audioRef.current;
   };
-
-  const createSessionMutation = useMutation({
-    mutationFn: () => brainstormSessionApi.create({}),
-  });
 
   const runTurnStream = useCallback(
     async (body: Parameters<typeof brainstormSessionApi.postTurnStream>[1]) => {
@@ -133,67 +133,54 @@ export function useBrainstormSession({
     audioRef.current?.stop();
   }, []);
 
-  const startSession = useCallback(async () => {
-    if (startedRef.current) return;
+  const startSession = useCallback(async (): Promise<boolean> => {
+    if (startedRef.current) {
+      return connectionStatus === "connected";
+    }
     startedRef.current = true;
     setError(null);
-
-    if (isBrainstormMockMode()) {
-      setSessionId("mock");
-      queryClient.setQueryData(brainstormKeys.transcript("mock"), initialTranscript);
-      setConnectionStatus("mock");
-      mockRef.current = createMockSessionDriver({
-        onState: setState,
-        onMicActive: setMicActive,
-        onEngineStep: (step, focusNodeId) => {
-          setEngineStep(step);
-          setFocusNodeId(focusNodeId ?? null);
-        },
-        onTranscript: (updater) => {
-          patchTranscript(updater);
-        },
-      });
-      return;
-    }
-
     setConnectionStatus("connecting");
+
+    const setters = { setSessionId, setEngineStep, setState };
+
     try {
-      const snapshot = await createSessionMutation.mutateAsync();
-      setSessionId(snapshot.sessionId);
-      setEngineStep(clampEngineStep(snapshot.engineStep));
-      setState(snapshot.state);
-      queryClient.setQueryData(
-        brainstormKeys.transcript(snapshot.sessionId),
-        snapshot.transcript ?? initialTranscript
-      );
-      queryClient.setQueryData(brainstormKeys.session(snapshot.sessionId), snapshot);
+      const storedId = readStoredSessionId();
+      if (storedId) {
+        try {
+          const snapshot = await resumeSessionMutation.mutateAsync(storedId);
+          applySnapshotToUi(snapshot, setters);
+          hydrateBrainstormSessionCache(queryClient, snapshot);
+          setConnectionStatus("connected");
+          return true;
+        } catch {
+          clearStoredSessionId();
+        }
+      }
+
+      const snapshot = await createSessionMutation.mutateAsync({});
+      applySnapshotToUi(snapshot, setters);
+      hydrateBrainstormSessionCache(queryClient, snapshot);
       setConnectionStatus("connected");
+      return true;
     } catch (err) {
-      console.warn("[useBrainstormSession] live failed — fallback mock", err);
-      setSessionId("mock");
-      queryClient.setQueryData(brainstormKeys.transcript("mock"), initialTranscript);
-      setConnectionStatus("mock");
-      mockRef.current = createMockSessionDriver({
-        onState: setState,
-        onMicActive: setMicActive,
-        onEngineStep: (step, focusNodeId) => {
-          setEngineStep(step);
-          setFocusNodeId(focusNodeId ?? null);
-        },
-        onTranscript: (updater) => patchTranscript(updater),
-      });
+      startedRef.current = false;
+      setConnectionStatus("error");
+      setError(err instanceof Error ? err.message : "Không kết nối được phiên brainstorm");
+      return false;
     }
-  }, [createSessionMutation, initialTranscript, patchTranscript, queryClient]);
+  }, [connectionStatus, createSessionMutation, queryClient, resumeSessionMutation]);
 
   const endSession = useCallback(() => {
     startedRef.current = false;
-    mockRef.current?.dispose();
-    mockRef.current = null;
     teardownLive();
+    clearStoredSessionId();
     setSessionId(null);
     setConnectionStatus("idle");
     setMicActive(false);
     setState("idle");
+    setEngineStep(0);
+    setFocusNodeId(null);
+    setError(null);
   }, [teardownLive]);
 
   useEffect(() => {
@@ -202,7 +189,6 @@ export function useBrainstormSession({
 
   useEffect(() => {
     return () => {
-      mockRef.current?.dispose();
       teardownLive();
     };
   }, [teardownLive]);
@@ -210,12 +196,7 @@ export function useBrainstormSession({
   const sendText = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
-      if (!trimmed) return;
-
-      if (mockRef.current) {
-        mockRef.current.sendText(trimmed);
-        return;
-      }
+      if (!trimmed || !sessionId) return;
 
       const clientTurnId = `turn-${Date.now()}`;
       patchTranscript((prev) => [
@@ -236,7 +217,7 @@ export function useBrainstormSession({
         text: trimmed,
       });
     },
-    [patchTranscript, postTurnMutation]
+    [patchTranscript, postTurnMutation, sessionId]
   );
 
   const stopVoiceCapture = useCallback(async (): Promise<string | null> => {
@@ -287,12 +268,7 @@ export function useBrainstormSession({
   }, []);
 
   const toggleMic = useCallback(async () => {
-    if (state === "processing" || state === "agent-speaking") return;
-
-    if (mockRef.current) {
-      mockRef.current.toggleMic(!micActive);
-      return;
-    }
+    if (!sessionId || state === "processing" || state === "agent-speaking") return;
 
     if (!micActive) {
       setMicActive(true);
@@ -318,7 +294,7 @@ export function useBrainstormSession({
       audioBase64: audioBase64 ?? undefined,
       audioMime: "audio/webm",
     });
-  }, [micActive, postTurnMutation, startVoiceCapture, state, stopVoiceCapture]);
+  }, [micActive, postTurnMutation, sessionId, startVoiceCapture, state, stopVoiceCapture]);
 
   return {
     sessionId,

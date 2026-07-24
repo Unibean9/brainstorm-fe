@@ -9,7 +9,6 @@ import { useSnapListen } from "@/hooks/useSnapListen";
 import { useBrainstormSession } from "@/hooks/useBrainstormSession";
 import { cn } from "@/lib/utils";
 
-import { MOCK_TRANSCRIPT } from "../data/room-graph-mock";
 import { engineStepNodeId } from "@/lib/brainstorm/engine-steps";
 import {
   RoomEngineRing,
@@ -62,12 +61,10 @@ export function RoomPage() {
   const [snapFlash, setSnapFlash] = useState(false);
   const [size, setSize] = useState({ w: 1200, h: 800 });
   const rootRef = useRef<HTMLDivElement>(null);
-  const startedRef = useRef(false);
   const [dockAmt, setDockAmt] = useState(0);
 
   const brainstorm = useBrainstormSession({
     enabled: sessionStarted,
-    initialTranscript: MOCK_TRANSCRIPT.slice(0, 4),
   });
 
   const {
@@ -77,6 +74,8 @@ export function RoomPage() {
     engineStep: streamEngineStep,
     focusNodeId,
     setFocusNodeId,
+    connectionStatus,
+    error: sessionError,
     startSession: connectBrainstorm,
     sendText: handleSendText,
     toggleMic,
@@ -175,10 +174,10 @@ export function RoomPage() {
   }, [size, dockAmt]);
 
   const handleStart = useCallback(
-    (via: "click" | "snap" = "click") => {
-      if (startedRef.current) return;
-      startedRef.current = true;
-      void connectBrainstorm();
+    async (via: "click" | "snap" = "click") => {
+      if (sessionStarted || connectionStatus === "connecting") return;
+      const ok = await connectBrainstorm();
+      if (!ok) return;
       if (via === "snap") {
         setSnapFlash(true);
         window.setTimeout(() => setSessionStarted(true), reduceMotion ? 0 : 220);
@@ -186,12 +185,14 @@ export function RoomPage() {
         setSessionStarted(true);
       }
     },
-    [connectBrainstorm, reduceMotion]
+    [connectBrainstorm, connectionStatus, reduceMotion, sessionStarted]
   );
 
   const { status: snapStatus, level: snapLevel, retry: retrySnapMic } = useSnapListen({
-    enabled: !sessionStarted,
-    onSnap: () => handleStart("snap"),
+    enabled: !sessionStarted && connectionStatus !== "connecting",
+    onSnap: () => {
+      void handleStart("snap");
+    },
   });
 
   const handleMic = () => {
@@ -391,11 +392,15 @@ export function RoomPage() {
           >
             <RoomStandbyGate
               size={orbHit}
-              onPlay={() => handleStart("click")}
+              onPlay={() => {
+                void handleStart("click");
+              }}
               snapStatus={snapStatus}
               snapLevel={snapLevel}
               snapFlash={snapFlash}
               onRetryMic={retrySnapMic}
+              connecting={connectionStatus === "connecting"}
+              error={sessionError}
             />
           </motion.div>
         ) : null}

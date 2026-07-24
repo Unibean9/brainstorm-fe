@@ -14,6 +14,8 @@ type RoomStandbyGateProps = {
   onRetryMic?: () => void;
   /** Brief flash when snap detected */
   snapFlash?: boolean;
+  connecting?: boolean;
+  error?: string | null;
 };
 
 /**
@@ -27,26 +29,41 @@ export function RoomStandbyGate({
   snapLevel,
   onRetryMic,
   snapFlash = false,
+  connecting = false,
+  error = null,
 }: RoomStandbyGateProps) {
   const reduceMotion = useReducedMotion();
   const ring = Math.max(96, size);
+  const blocked = connecting;
 
-  const hint =
-    snapStatus === "listening"
-      ? "Bấm Play  ·  Búng tay"
-      : snapStatus === "denied"
-        ? "Bấm Play  ·  Mic chưa được phép"
-        : snapStatus === "unsupported"
-          ? "Bấm Play để bắt đầu"
-          : "Bấm Play  ·  Đang mở mic…";
+  const hint = connecting
+    ? "Đang tạo phiên…"
+    : error
+      ? error
+      : snapStatus === "listening"
+        ? "Bấm Play  ·  Búng tay"
+        : snapStatus === "denied"
+          ? "Bấm Play  ·  Mic chưa được phép"
+          : snapStatus === "unsupported"
+            ? "Bấm Play để bắt đầu"
+            : "Bấm Play  ·  Đang mở mic…";
 
   return (
     <div className="flex flex-col items-center">
       <button
         type="button"
         onClick={onPlay}
-        aria-label="Bắt đầu phiên — Play hoặc búng tay"
-        className="group relative grid place-items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60"
+        disabled={blocked}
+        aria-busy={connecting}
+        aria-label={
+          connecting
+            ? "Đang tạo phiên brainstorm"
+            : "Bắt đầu phiên — Play hoặc búng tay"
+        }
+        className={cn(
+          "group relative grid place-items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60",
+          blocked && "cursor-wait opacity-80"
+        )}
         style={{ width: ring, height: ring }}
       >
         {/* Expanding sonic rings */}
@@ -173,8 +190,13 @@ export function RoomStandbyGate({
         </span>
         <p
           className={cn(
-            "mt-1 text-center text-[11px] tracking-wide text-cyan-100/70 sm:text-xs",
-            snapStatus === "denied" && "text-amber-100/70"
+            "mt-1 max-w-[16rem] text-center text-[11px] tracking-wide sm:text-xs",
+            error
+              ? "text-amber-200/90"
+              : connecting
+                ? "text-cyan-100/85"
+                : "text-cyan-100/70",
+            snapStatus === "denied" && !error && !connecting && "text-amber-100/70"
           )}
         >
           {hint}

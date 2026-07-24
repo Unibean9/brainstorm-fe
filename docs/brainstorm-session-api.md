@@ -4,15 +4,11 @@ Base URL: `NEXT_PUBLIC_API_URL` (default `http://localhost:8080/`)
 
 Auth: `Authorization: Bearer {accessToken}`
 
-FE dùng **TanStack Query** (cache session/transcript) + **`fetch` SSE** (stream text + audio trong một response).
+FE dùng **axios** (REST) + **TanStack Query** (cache) + **`fetch` SSE** (stream text + audio trong một response).
 
-**Không dùng SignalR** cho luồng agent.
+**Không dùng SignalR** cho luồng agent. **Không mock** — mọi dữ liệu phiên từ BE.
 
-```env
-# mock = demo local (default) — mock driver emit engine-step giống BE
-# live = REST + SSE; fallback mock nếu lỗi
-NEXT_PUBLIC_BRAINSTORM_STREAM_MODE=mock
-```
+`sessionId` được lưu `localStorage` (`brainstorm_session_id`) để reload trang → `GET /sessions/{id}`.
 
 ---
 
@@ -270,13 +266,14 @@ Listening (mic bật): `state: listening` + `engine-step: { step: 0, focusNodeId
 
 | File | Role |
 |------|------|
+| `lib/api/services/brainstormSession.ts` | axios REST + fetch SSE turn |
+| `lib/brainstorm/session-storage.ts` | `localStorage` sessionId |
+| `hooks/queries/useBrainstormSessionQueries.ts` | TanStack Query mutations / cache |
+| `hooks/useBrainstormSession.ts` | Session orchestration + SSE turn |
 | `lib/brainstorm/engine-steps.ts` | Map step 0–7 ↔ node id (contract BE) |
-| `hooks/useBrainstormSession.ts` | Query cache + SSE turn mutation |
-| `lib/api/services/brainstormSession.ts` | REST + `postTurnStream` |
 | `lib/brainstorm/consume-sse-stream.ts` | SSE parser |
 | `lib/brainstorm/apply-turn-event.ts` | Map event → UI (`engine-step` → ring) |
 | `lib/brainstorm/brainstorm-query-keys.ts` | TanStack Query keys |
 | `lib/audio/agent-audio-player.ts` | Play `audio-chunk` |
-| `lib/brainstorm/mock-session-driver.ts` | Mock emit `engine-step` giống BE |
 
-Test live: `NEXT_PUBLIC_BRAINSTORM_STREAM_MODE=live`
+Env mẫu: `.env.example`
