@@ -40,7 +40,7 @@ export function RoomSessionChat({
   return (
     <motion.div
       className={cn(
-        "pointer-events-auto absolute inset-0 z-30 pt-40 pb-28 sm:pt-44",
+        "pointer-events-auto absolute inset-0 z-30 pt-52 pb-28 sm:pt-60",
         CHAT_STAGE_GRID
       )}
       initial={reduceMotion ? false : { opacity: 0 }}
@@ -48,7 +48,7 @@ export function RoomSessionChat({
       exit={{ opacity: 0, transition: { duration: 0.28 } }}
       transition={{ ...t, delay: reduceMotion ? 0 : 0.08 }}
     >
-      <div className="no-scrollbar min-h-0 overflow-y-auto">
+      <div className="no-scrollbar flex min-h-0 flex-col overflow-y-auto pl-0.5 sm:pl-1">
         <RoomEngineRail activeId={activeNodeId} onSelect={onSelectNode} />
       </div>
 

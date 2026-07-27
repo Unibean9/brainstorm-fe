@@ -1,15 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import type { TranscriptEntry } from "@/app/session/data/room-graph-types";
 import type { WorkflowNodeId } from "@/app/session/components/room-orb-layout";
 import { AgentAudioPlayer } from "@/lib/audio/agent-audio-player";
+import {
+  startBrowserSpeechRecognition,
+  type BrowserSpeechSession,
+} from "@/lib/brainstorm/browser-speech-recognition";
 import { applyTurnStreamEvent } from "@/lib/brainstorm/apply-turn-event";
 import { brainstormKeys } from "@/lib/brainstorm/brainstorm-query-keys";
 import { clampEngineStep } from "@/lib/brainstorm/engine-steps";
 import { consumeSseStream } from "@/lib/brainstorm/consume-sse-stream";
+import { BrainstormApiError } from "@/lib/brainstorm/parse-api-error";
 import {
   clearStoredSessionId,
   readStoredSessionId,
@@ -22,7 +27,7 @@ import {
   useCreateBrainstormSessionMutation,
   useResumeBrainstormSessionMutation,
 } from "@/hooks/queries/useBrainstormSessionQueries";
-import type { BrainstormSessionSnapshot, BrainstormSessionState } from "@/types/brainstorm-stream";
+import type { BrainstormSessionSnapshot, BrainstormSessionState, BrainstormPhaseKey } from "@/types/brainstorm-stream";
 
 export type BrainstormConnectionStatus = "idle" | "connecting" | "connected" | "error";
 
@@ -37,18 +42,30 @@ function formatTime(ts = Date.now()) {
   });
 }
 
+function newClientTurnId() {
+  return globalThis.crypto?.randomUUID?.() ?? `turn-${Date.now()}`;
+}
+
 function applySnapshotToUi(
   snapshot: BrainstormSessionSnapshot,
   setters: {
     setSessionId: (id: string) => void;
     setEngineStep: (step: number) => void;
     setState: (state: BrainstormSessionState) => void;
+    setSessionPhaseKey: (phaseKey: BrainstormPhaseKey) => void;
   }
 ) {
   writeStoredSessionId(snapshot.sessionId);
   setters.setSessionId(snapshot.sessionId);
   setters.setEngineStep(clampEngineStep(snapshot.engineStep));
-  setters.setState(snapshot.state);
+  setters.setState(snapshot.state === "processing" ? "processing" : "idle");
+  setters.setSessionPhaseKey(snapshot.phaseKey);
+}
+
+function formatTurnError(err: unknown) {
+  if (err instanceof BrainstormApiError) return err.message;
+  if (err instanceof Error) return err.message;
+  return "Turn stream failed";
 }
 
 export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
@@ -59,12 +76,13 @@ export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
   const [state, setState] = useState<BrainstormSessionState>("idle");
   const [micActive, setMicActive] = useState(false);
   const [engineStep, setEngineStep] = useState(0);
+  const [sessionPhaseKey, setSessionPhaseKey] = useState<BrainstormPhaseKey>("framing");
   const [focusNodeId, setFocusNodeId] = useState<WorkflowNodeId | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [fillerActive, setFillerActive] = useState(false);
 
   const audioRef = useRef<AgentAudioPlayer | null>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
+  const speechRef = useRef<BrowserSpeechSession | null>(null);
   const turnAbortRef = useRef<AbortController | null>(null);
   const startedRef = useRef(false);
 
@@ -88,6 +106,10 @@ export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
     return audioRef.current;
   };
 
+  const stopFiller = useCallback(() => {
+    setFillerActive(false);
+  }, []);
+
   const runTurnStream = useCallback(
     async (body: Parameters<typeof brainstormSessionApi.postTurnStream>[1]) => {
       if (!sessionId) return;
@@ -101,25 +123,32 @@ export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
         setState,
         setEngineStep,
         setFocusNodeId,
+        setSessionPhaseKey,
         setError,
         setTranscript: patchTranscript,
         audio: ensureAudio(),
+        stopFiller,
       };
 
-      await consumeSseStream(
-        response,
-        (event, envelope) => applyTurnStreamEvent(event, envelope, ctx),
-        ac.signal
-      );
+      try {
+        await consumeSseStream(
+          response,
+          (event, envelope) => applyTurnStreamEvent(event, envelope, ctx),
+          ac.signal
+        );
+      } finally {
+        stopFiller();
+      }
     },
-    [patchTranscript, sessionId]
+    [patchTranscript, sessionId, stopFiller]
   );
 
   const postTurnMutation = useMutation({
     mutationFn: runTurnStream,
     onError: (err) => {
       if (err instanceof DOMException && err.name === "AbortError") return;
-      setError(err instanceof Error ? err.message : "Turn stream failed");
+      stopFiller();
+      setError(formatTurnError(err));
       setState("idle");
     },
   });
@@ -127,9 +156,8 @@ export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
   const teardownLive = useCallback(() => {
     turnAbortRef.current?.abort();
     turnAbortRef.current = null;
-    recorderRef.current?.stop();
-    recorderRef.current = null;
-    audioChunksRef.current = [];
+    speechRef.current?.abort();
+    speechRef.current = null;
     audioRef.current?.stop();
   }, []);
 
@@ -141,7 +169,7 @@ export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
     setError(null);
     setConnectionStatus("connecting");
 
-    const setters = { setSessionId, setEngineStep, setState };
+    const setters = { setSessionId, setEngineStep, setState, setSessionPhaseKey };
 
     try {
       const storedId = readStoredSessionId();
@@ -165,7 +193,7 @@ export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
     } catch (err) {
       startedRef.current = false;
       setConnectionStatus("error");
-      setError(err instanceof Error ? err.message : "Không kết nối được phiên brainstorm");
+      setError(formatTurnError(err));
       return false;
     }
   }, [connectionStatus, createSessionMutation, queryClient, resumeSessionMutation]);
@@ -179,12 +207,18 @@ export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
     setMicActive(false);
     setState("idle");
     setEngineStep(0);
+    setSessionPhaseKey("framing");
     setFocusNodeId(null);
     setError(null);
+    setFillerActive(false);
   }, [teardownLive]);
 
   useEffect(() => {
-    if (!enabled) endSession();
+    if (!enabled) {
+      startTransition(() => {
+        endSession();
+      });
+    }
   }, [enabled, endSession]);
 
   useEffect(() => {
@@ -193,24 +227,28 @@ export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
     };
   }, [teardownLive]);
 
-  const sendText = useCallback(
-    async (text: string) => {
+  const submitTurn = useCallback(
+    async (text: string, options?: { optimistic?: boolean }) => {
       const trimmed = text.trim();
       if (!trimmed || !sessionId) return;
 
-      const clientTurnId = `turn-${Date.now()}`;
-      patchTranscript((prev) => [
-        ...prev,
-        {
-          id: clientTurnId,
-          speaker: "user",
-          text: trimmed,
-          time: formatTime(),
-          timestampMs: Date.now(),
-          phaseKey: "Explore",
-        },
-      ]);
+      const clientTurnId = newClientTurnId();
+      if (options?.optimistic !== false) {
+        patchTranscript((prev) => [
+          ...prev,
+          {
+            id: clientTurnId,
+            speaker: "user",
+            text: trimmed,
+            time: formatTime(),
+            timestampMs: Date.now(),
+            phaseKey: "Framing",
+          },
+        ]);
+      }
       setState("processing");
+      setError(null);
+      setFillerActive(true);
 
       await postTurnMutation.mutateAsync({
         clientTurnId,
@@ -220,52 +258,12 @@ export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
     [patchTranscript, postTurnMutation, sessionId]
   );
 
-  const stopVoiceCapture = useCallback(async (): Promise<string | null> => {
-    const recorder = recorderRef.current;
-    if (!recorder || recorder.state === "inactive") return null;
-
-    return new Promise((resolve) => {
-      recorder.onstop = async () => {
-        recorder.stream.getTracks().forEach((t) => t.stop());
-        const blob = new Blob(audioChunksRef.current, {
-          type: recorder.mimeType || "audio/webm",
-        });
-        audioChunksRef.current = [];
-        recorderRef.current = null;
-
-        if (!blob.size) {
-          resolve(null);
-          return;
-        }
-
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const result = reader.result;
-          if (typeof result !== "string") {
-            resolve(null);
-            return;
-          }
-          resolve(result.split(",")[1] ?? null);
-        };
-        reader.readAsDataURL(blob);
-      };
-      recorder.stop();
-    });
-  }, []);
-
-  const startVoiceCapture = useCallback(async () => {
-    audioChunksRef.current = [];
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-      ? "audio/webm;codecs=opus"
-      : "audio/webm";
-    const recorder = new MediaRecorder(stream, { mimeType: mime });
-    recorderRef.current = recorder;
-    recorder.ondataavailable = (ev) => {
-      if (ev.data.size) audioChunksRef.current.push(ev.data);
-    };
-    recorder.start(250);
-  }, []);
+  const sendText = useCallback(
+    async (text: string) => {
+      await submitTurn(text);
+    },
+    [submitTurn]
+  );
 
   const toggleMic = useCallback(async () => {
     if (!sessionId || state === "processing" || state === "agent-speaking") return;
@@ -273,8 +271,9 @@ export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
     if (!micActive) {
       setMicActive(true);
       setState("listening");
+      setError(null);
       try {
-        await startVoiceCapture();
+        speechRef.current = startBrowserSpeechRecognition();
       } catch (err) {
         setMicActive(false);
         setState("idle");
@@ -284,17 +283,26 @@ export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
     }
 
     setMicActive(false);
-    setState("processing");
+    const session = speechRef.current;
+    speechRef.current = null;
 
-    const audioBase64 = await stopVoiceCapture();
-    const clientTurnId = `vturn-${Date.now()}`;
+    if (!session) {
+      setState("idle");
+      return;
+    }
 
-    await postTurnMutation.mutateAsync({
-      clientTurnId,
-      audioBase64: audioBase64 ?? undefined,
-      audioMime: "audio/webm",
-    });
-  }, [micActive, postTurnMutation, sessionId, startVoiceCapture, state, stopVoiceCapture]);
+    try {
+      const text = await session.stop();
+      if (!text.trim()) {
+        setState("idle");
+        return;
+      }
+      await submitTurn(text);
+    } catch (err) {
+      setState("idle");
+      setError(err instanceof Error ? err.message : "Nhận giọng nói thất bại");
+    }
+  }, [micActive, sessionId, state, submitTurn]);
 
   return {
     sessionId,
@@ -303,9 +311,11 @@ export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
     micActive,
     transcript,
     engineStep,
+    sessionPhaseKey,
     focusNodeId,
     setFocusNodeId,
     error,
+    fillerActive,
     isTurnPending: postTurnMutation.isPending,
     startSession,
     endSession,

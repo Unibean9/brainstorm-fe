@@ -8,7 +8,7 @@ export const ORB_RADIUS_FACTOR = 0.142;
 
 /** Docked when Chat open — top-right, smaller */
 export const ORB_DOCK_CX = 0.82;
-export const ORB_DOCK_CY = 0.2;
+export const ORB_DOCK_CY = 0.28;
 export const ORB_DOCK_RADIUS_FACTOR = 0.088;
 
 export function orbCoreRadius(w: number, h: number, radiusFactor = ORB_RADIUS_FACTOR) {

@@ -43,7 +43,7 @@ export function RoomEngineRail({ activeId, onSelect }: RoomEngineRailProps) {
   return (
     <nav
       aria-label="Engine nodes"
-      className="mt-5 flex w-[13.5rem] shrink-0 flex-col gap-1.5 pt-2 sm:mt-7 sm:w-56"
+      className="flex w-[13.5rem] shrink-0 flex-col gap-2 sm:w-56"
     >
       {WORKFLOW_NODES_HOME.map((node, i) => {
         const Icon = ICONS[node.id];
@@ -60,7 +60,7 @@ export function RoomEngineRail({ activeId, onSelect }: RoomEngineRailProps) {
               delay: reduceMotion ? 0 : 0.12 + i * 0.04,
             }}
             className={cn(
-              "group flex items-center gap-2.5 rounded-xl px-2.5 py-2.5 text-left transition-colors",
+              "group flex min-h-[3.125rem] items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors",
               active
                 ? "border border-white/14 bg-[#07111f]/92 text-white shadow-[0_8px_24px_rgba(0,0,0,0.35)]"
                 : "border border-transparent text-white/70 hover:bg-white/6 hover:text-white/90"

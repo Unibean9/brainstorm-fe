@@ -1,5 +1,7 @@
 import type { StreamEnvelope } from "@/types/brainstorm-stream";
 
+import { parseApiErrorBody } from "@/lib/brainstorm/parse-api-error";
+
 export type SseEventHandler = (event: string, envelope: StreamEnvelope<unknown>) => void;
 
 /**
@@ -13,7 +15,7 @@ export async function consumeSseStream(
 ): Promise<void> {
   if (!response.ok) {
     const text = await response.text().catch(() => "");
-    throw new Error(text || `Stream failed (${response.status})`);
+    throw parseApiErrorBody(text, response.status);
   }
 
   const reader = response.body?.getReader();

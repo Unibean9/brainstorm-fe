@@ -197,6 +197,8 @@ class ApiService {
   }
 }
 
-const apiService = new ApiService(process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080/");
+import { resolveApiBaseUrl } from "./resolve-api-base-url";
+
+const apiService = new ApiService(resolveApiBaseUrl());
 
 export default apiService;

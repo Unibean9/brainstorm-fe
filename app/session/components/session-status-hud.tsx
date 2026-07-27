@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import type { HubWebglState } from "./room-hub-webgl";
+import { Checkbox } from "@/components/ui/checkbox";
 
 type WeatherInfo = {
   tempC: number | null;
@@ -38,9 +39,16 @@ function greetingFor(d: Date) {
 type SessionStatusHudProps = {
   state: HubWebglState;
   micActive?: boolean;
+  fillerEnabled?: boolean;
+  onFillerEnabledChange?: (enabled: boolean) => void;
 };
 
-export function SessionStatusHud({ state, micActive = false }: SessionStatusHudProps) {
+export function SessionStatusHud({
+  state,
+  micActive = false,
+  fillerEnabled = true,
+  onFillerEnabledChange,
+}: SessionStatusHudProps) {
   const [now, setNow] = useState(() => new Date());
   const [weather, setWeather] = useState<WeatherInfo>({
     tempC: null,
@@ -211,6 +219,17 @@ export function SessionStatusHud({ state, micActive = false }: SessionStatusHudP
           />
         </div>
       </div>
+
+      {onFillerEnabledChange ? (
+        <label className="pointer-events-auto mt-3 flex cursor-pointer items-center gap-2.5 text-[10px] font-medium tracking-[0.12em] text-white/70">
+          <Checkbox
+            checked={fillerEnabled}
+            onCheckedChange={(checked) => onFillerEnabledChange(checked === true)}
+            aria-label="Bật âm thanh chờ khi facilitator đang suy nghĩ"
+          />
+          THINKING SOUND
+        </label>
+      ) : null}
     </aside>
   );
 }

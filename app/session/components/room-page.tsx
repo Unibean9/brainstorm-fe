@@ -7,6 +7,8 @@ import { Mic, MessageCircle } from "lucide-react";
 
 import { useSnapListen } from "@/hooks/useSnapListen";
 import { useBrainstormSession } from "@/hooks/useBrainstormSession";
+import { useFillerThinking } from "@/hooks/useFillerThinking";
+import { useBrainstormArtifacts } from "@/hooks/useBrainstormArtifacts";
 import { cn } from "@/lib/utils";
 
 import { engineStepNodeId } from "@/lib/brainstorm/engine-steps";
@@ -30,6 +32,7 @@ import {
 import { RoomSessionChat, CHAT_STAGE_COLUMN, CHAT_STAGE_GRID, CHAT_STAGE_INNER } from "./room-session-chat";
 import { RoomStandbyGate } from "./room-standby-gate";
 import { RoomVoiceStatus } from "./room-voice-status";
+import { RoomArtifactActions } from "./room-artifact-actions";
 import { SessionStatusHud } from "./session-status-hud";
 
 const RoomHubWebgl = dynamic(
@@ -68,18 +71,35 @@ export function RoomPage() {
   });
 
   const {
+    sessionId,
     state,
     micActive,
     transcript,
     engineStep: streamEngineStep,
+    sessionPhaseKey,
     focusNodeId,
     setFocusNodeId,
     connectionStatus,
     error: sessionError,
+    fillerActive,
+    isTurnPending,
     startSession: connectBrainstorm,
     sendText: handleSendText,
     toggleMic,
   } = brainstorm;
+
+  const fillerThinking = useFillerThinking({
+    sessionActive: sessionStarted,
+    isProcessing: fillerActive && !sessionError,
+  });
+
+  const artifacts = useBrainstormArtifacts({
+    sessionId,
+    sessionPhaseKey,
+    transcript,
+    voiceState: state,
+    isTurnPending,
+  });
 
   useEffect(() => {
     const el = rootRef.current;
@@ -203,7 +223,10 @@ export function RoomPage() {
   const motionOff = !!reduceMotion;
   const fade = motionOff ? { duration: 0 } : FADE;
   const orbHit = Math.max(72, layout.coreR * 2.2);
-  const chatBusy = state === "processing" || state === "agent-speaking";
+  const chatBusy =
+    artifacts.isWrapped ||
+    state === "processing" ||
+    state === "agent-speaking";
 
   const closeChat = useCallback(() => {
     setChatOpen(false);
@@ -231,7 +254,33 @@ export function RoomPage() {
             exit={{ opacity: 0 }}
             transition={{ ...fade, delay: motionOff ? 0 : 0.15 }}
           >
-            <SessionStatusHud state={state} micActive={micActive} />
+            <SessionStatusHud
+              state={state}
+              micActive={micActive}
+              fillerEnabled={fillerThinking.fillerEnabled}
+              onFillerEnabledChange={fillerThinking.setFillerEnabled}
+            />
+            <RoomArtifactActions
+              isWrapped={artifacts.isWrapped}
+              canGenerateReport={artifacts.canGenerateReport}
+              canGenerateLanding={artifacts.canGenerateLanding}
+              canGeneratePitch={artifacts.canGeneratePitch}
+              reportUrl={artifacts.reportUrl}
+              landingPageUrl={artifacts.landingPageUrl}
+              pitchDeckHtmlUrl={artifacts.pitchDeckHtmlUrl}
+              pitchDeckExportUrl={artifacts.pitchDeckExportUrl}
+              pitchDeckFormat={artifacts.pitchDeckFormat}
+              reportHint={artifacts.reportHint}
+              reportError={artifacts.reportError}
+              landingError={artifacts.landingError}
+              pitchError={artifacts.pitchError}
+              isReportPending={artifacts.isReportPending}
+              isLandingPending={artifacts.isLandingPending}
+              isPitchPending={artifacts.isPitchPending}
+              onCreateReport={() => void artifacts.createReport()}
+              onCreateLandingPage={() => void artifacts.createLandingPage()}
+              onCreatePitchDeck={(format) => void artifacts.createPitchDeck(format)}
+            />
           </motion.div>
         ) : null}
       </AnimatePresence>

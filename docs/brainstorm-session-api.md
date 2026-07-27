@@ -10,7 +10,7 @@ FE dùng **axios** (REST) + **TanStack Query** (cache) + **`fetch` SSE** (stream
 
 **Text agent (chat panel):** stream qua **`text-delta`** — FE cộng dồn từng đoạn vào bubble realtime. Kết thúc bằng **`text-done`**.
 
-**TTS (BE → FE):** BE render **một file audio hoàn chỉnh** (mp3/webm) — event **`agent-audio`**, FE phát một lần (không stream audio).
+**TTS (BE → FE):** BE render **một file audio hoàn chỉnh** — thường **`audio/wav`** (hoặc mp3/webm) — event **`agent-audio`**, FE phát một lần (không stream audio).
 
 `sessionId` được lưu `localStorage` (`brainstorm_session_id`) để reload trang → `GET /sessions/{id}`.
 
@@ -221,7 +221,7 @@ event: text-done
 data: {"sessionId":"sess-1","turnId":"turn-1","ts":1719840001900,"data":{"messageId":"amsg-1","text":"Ghi nhận rồi — …","phaseKey":"Explore"}}
 
 event: agent-audio
-data: {"sessionId":"sess-1","turnId":"turn-1","ts":1719840002000,"data":{"messageId":"amsg-1","encoding":"audio/mpeg","audioBase64":"…"}}
+data: {"sessionId":"sess-1","turnId":"turn-1","ts":1719840002000,"data":{"messageId":"amsg-1","encoding":"audio/wav","audioBase64":"…"}}
 
 event: engine-step
 data: {"sessionId":"sess-1","turnId":"turn-1","ts":1719840002280,"data":{"step":6,"focusNodeId":"trace"}}

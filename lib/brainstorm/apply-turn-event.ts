@@ -1,20 +1,19 @@
 import type { TranscriptEntry } from "@/app/session/data/room-graph-types";
 import type { WorkflowNodeId } from "@/app/session/components/room-orb-layout";
+import { mapBePhaseToUi } from "@/lib/brainstorm/map-session-snapshot";
 import { clampEngineStep, normalizeEngineStepPayload } from "@/lib/brainstorm/engine-steps";
 import type { AgentAudioPlayer } from "@/lib/audio/agent-audio-player";
 import type {
-  AgentAudioChunkPayload,
-  AgentAudioCompletedPayload,
   AgentAudioReadyPayload,
-  AgentRunFailedPayload,
   AgentRunStartedPayload,
+  AgentStreamErrorPayload,
   AgentTextCompletedPayload,
   AgentTextDeltaPayload,
+  BrainstormPhaseKey,
   BrainstormSessionState,
   EngineStepChangedPayload,
   SessionStateChangedPayload,
   StreamEnvelope,
-  UserTranscriptFinalPayload,
 } from "@/types/brainstorm-stream";
 
 function formatTime(ts: number) {
@@ -28,7 +27,8 @@ function upsertAgentDelta(
   prev: TranscriptEntry[],
   messageId: string,
   delta: string,
-  ts: number
+  ts: number,
+  phaseKey?: TranscriptEntry["phaseKey"]
 ): TranscriptEntry[] {
   const idx = prev.findIndex((e) => e.id === messageId);
   if (idx === -1) {
@@ -40,7 +40,7 @@ function upsertAgentDelta(
         text: delta,
         time: formatTime(ts),
         timestampMs: ts,
-        phaseKey: "Explore",
+        phaseKey: phaseKey ?? "Framing",
       },
     ];
   }
@@ -53,9 +53,12 @@ export type TurnEventContext = {
   setState: (state: BrainstormSessionState) => void;
   setEngineStep: (step: number) => void;
   setFocusNodeId: (id: WorkflowNodeId | null) => void;
+  setSessionPhaseKey: (phaseKey: BrainstormPhaseKey) => void;
   setError: (message: string | null) => void;
   setTranscript: (updater: (prev: TranscriptEntry[]) => TranscriptEntry[]) => void;
   audio: AgentAudioPlayer;
+  /** Dừng filler thinking — gọi khi text-done, idle, lỗi */
+  stopFiller?: () => void;
 };
 
 export function applyTurnStreamEvent(
@@ -68,25 +71,12 @@ export function applyTurnStreamEvent(
     case "session-state": {
       const { data } = envelope as SessionStateChangedPayload;
       ctx.setState(data.state);
-      break;
-    }
-    case "user-transcript-final": {
-      const { data, ts } = envelope as UserTranscriptFinalPayload;
-      ctx.setTranscript((prev) => [
-        ...prev.filter((e) => e.id !== data.messageId),
-        {
-          id: data.messageId,
-          speaker: "user",
-          text: data.text,
-          time: formatTime(ts),
-          timestampMs: ts,
-          phaseKey: data.phaseKey ?? "Explore",
-        },
-      ]);
+      if (data.state !== "processing") ctx.stopFiller?.();
       break;
     }
     case "agent-run-started": {
       const { data, ts } = envelope as AgentRunStartedPayload;
+      ctx.stopFiller?.();
       ctx.setTranscript((prev) => {
         if (prev.some((e) => e.id === data.messageId)) return prev;
         return [
@@ -97,7 +87,7 @@ export function applyTurnStreamEvent(
             text: "",
             time: formatTime(ts),
             timestampMs: ts,
-            phaseKey: "Explore",
+            phaseKey: "Framing",
           },
         ];
       });
@@ -110,6 +100,9 @@ export function applyTurnStreamEvent(
     }
     case "text-done": {
       const { data, ts } = envelope as AgentTextCompletedPayload;
+      ctx.stopFiller?.();
+      ctx.setSessionPhaseKey(data.phaseKey);
+      const phaseKey = mapBePhaseToUi(data.phaseKey);
       ctx.setTranscript((prev) => {
         const idx = prev.findIndex((e) => e.id === data.messageId);
         const entry: TranscriptEntry = {
@@ -118,7 +111,7 @@ export function applyTurnStreamEvent(
           text: data.text,
           time: formatTime(ts),
           timestampMs: ts,
-          phaseKey: data.phaseKey ?? "Explore",
+          phaseKey,
         };
         if (idx === -1) return [...prev, entry];
         const next = [...prev];
@@ -129,29 +122,17 @@ export function applyTurnStreamEvent(
     }
     case "agent-audio": {
       const { data } = envelope as AgentAudioReadyPayload;
+      ctx.stopFiller?.();
       ctx.setState("agent-speaking");
       void ctx.audio
         .playOnce({
           chunkBase64: data.audioBase64,
-          encoding: data.encoding,
+          encoding: "audio/wav",
         })
+        .catch(() => undefined)
         .then(() => {
           ctx.setState("idle");
         });
-      break;
-    }
-    case "audio-chunk": {
-      const { data } = envelope as AgentAudioChunkPayload;
-      ctx.setState("agent-speaking");
-      void ctx.audio.enqueue({
-        chunkBase64: data.chunkBase64,
-        encoding: data.encoding,
-        sampleRate: data.sampleRate,
-      });
-      break;
-    }
-    case "audio-done": {
-      if (!ctx.audio.isPlaying) ctx.setState("idle");
       break;
     }
     case "engine-step": {
@@ -161,10 +142,11 @@ export function applyTurnStreamEvent(
       ctx.setFocusNodeId(normalized.focusNodeId);
       break;
     }
-    case "error":
-    case "agent-run-failed": {
-      const { data } = envelope as AgentRunFailedPayload;
-      ctx.setError(data.message);
+    case "error": {
+      const { data } = envelope as AgentStreamErrorPayload;
+      if (data.code === "audio_unavailable" && data.recoverable) break;
+      ctx.stopFiller?.();
+      ctx.setError(data.code);
       ctx.setState("idle");
       break;
     }
