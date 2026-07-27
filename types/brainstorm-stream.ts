@@ -42,10 +42,14 @@ export type AgentTextCompletedPayload = StreamEnvelope<{
   phaseKey: BrainstormPhaseKey;
 }>;
 
-export type AgentAudioReadyPayload = StreamEnvelope<{
+export type AgentAudioChunkPayload = StreamEnvelope<{
   messageId: string;
   encoding: "audio/wav";
   audioBase64: string;
+}>;
+
+export type AgentAudioDonePayload = StreamEnvelope<{
+  messageId: string;
 }>;
 
 export type AgentStreamErrorPayload = StreamEnvelope<{
@@ -84,28 +88,30 @@ export type BrainstormSessionSnapshot = {
   activeTurn?: BrainstormActiveTurn | null;
 };
 
-export type CreateBrainstormSessionRequest = Record<string, never>;
+export type BrainstormAudioMode = "streaming" | "standard" | "text";
 
-/** BE chỉ nhận clientTurnId + text */
 export type PostBrainstormTurnRequest = {
   clientTurnId: string;
   text: string;
+  audioMode?: BrainstormAudioMode;
 };
 
-export type BrainstormReportResponse = {
-  reportUrl: string;
+export type BrainstormPrdResponse = {
+  prdUrl: string;
   generatedAt: string;
 };
 
 export type BrainstormLandingPageResponse = {
   landingPageUrl: string;
+  /** Cảnh báo không chặn request — VD "measurement_unavailable: ...". Có thể rỗng. */
+  warnings?: string[];
 };
-
-export type BrainstormPitchDeckFormat = "pdf" | "ppt" | "pptx";
 
 export type BrainstormPitchDeckResponse = {
   htmlUrl: string;
   exportUrl: string;
+  speakerScriptUrl: string;
+  warnings?: string[];
 };
 
 export type BrainstormFillerAsset = {

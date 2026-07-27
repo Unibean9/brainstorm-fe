@@ -159,20 +159,36 @@ class ApiService {
     return this.client.request<T>(config);
   }
 
-  async get<T>(url: string, params?: Record<string, any>): Promise<AxiosResponse<T>> {
-    return this.request<T>({ method: "GET", url, params });
+  async get<T>(
+    url: string,
+    params?: Record<string, any>,
+    config?: AxiosRequestConfig
+  ): Promise<AxiosResponse<T>> {
+    return this.request<T>({ ...config, method: "GET", url, params });
   }
 
-  async post<T, D = any>(url: string, data?: D): Promise<AxiosResponse<T>> {
-    return this.request<T>({ method: "POST", url, data });
+  async post<T, D = any>(
+    url: string,
+    data?: D,
+    config?: AxiosRequestConfig
+  ): Promise<AxiosResponse<T>> {
+    return this.request<T>({ ...config, method: "POST", url, data });
   }
 
-  async put<T, D = any>(url: string, data?: D): Promise<AxiosResponse<T>> {
-    return this.request<T>({ method: "PUT", url, data });
+  async put<T, D = any>(
+    url: string,
+    data?: D,
+    config?: AxiosRequestConfig
+  ): Promise<AxiosResponse<T>> {
+    return this.request<T>({ ...config, method: "PUT", url, data });
   }
 
-  async patch<T, D = any>(url: string, data?: D): Promise<AxiosResponse<T>> {
-    return this.request<T>({ method: "PATCH", url, data });
+  async patch<T, D = any>(
+    url: string,
+    data?: D,
+    config?: AxiosRequestConfig
+  ): Promise<AxiosResponse<T>> {
+    return this.request<T>({ ...config, method: "PATCH", url, data });
   }
 
   async delete<T>(url: string): Promise<AxiosResponse<T>> {

@@ -6,11 +6,7 @@ import type { TranscriptEntry } from "@/app/session/data/room-graph-types";
 import { brainstormSessionApi } from "@/lib/api/services/brainstormSession";
 import { mapSessionSnapshot } from "@/lib/brainstorm/map-session-snapshot";
 import { brainstormKeys } from "@/lib/brainstorm/brainstorm-query-keys";
-import type {
-  BrainstormPitchDeckFormat,
-  BrainstormSessionSnapshot,
-  CreateBrainstormSessionRequest,
-} from "@/types/brainstorm-stream";
+import type { BrainstormSessionSnapshot } from "@/types/brainstorm-stream";
 
 export function useBrainstormSessionQuery(sessionId: string | null, enabled = false) {
   return useQuery({
@@ -31,18 +27,8 @@ export function useBrainstormTranscriptQuery(sessionId: string | null) {
   });
 }
 
-export function useCreateBrainstormSessionMutation() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (body: CreateBrainstormSessionRequest = {}) => brainstormSessionApi.create(body),
-    onSuccess: (snapshot) => {
-      hydrateBrainstormSessionCache(queryClient, snapshot);
-    },
-  });
-}
-
-export function useResumeBrainstormSessionMutation() {
+/** Nạp snapshot của 1 session đã tồn tại (tạo qua room) — không tạo session mới. */
+export function useLoadBrainstormSessionMutation() {
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -53,16 +39,10 @@ export function useResumeBrainstormSessionMutation() {
   });
 }
 
-export function useUpdateBrainstormVoiceMutation() {
+export function useCreateBrainstormPrdMutation() {
   return useMutation({
-    mutationFn: ({ sessionId, voiceId = "default" }: { sessionId: string; voiceId?: string }) =>
-      brainstormSessionApi.updateVoice(sessionId, voiceId),
-  });
-}
-
-export function useCreateBrainstormReportMutation() {
-  return useMutation({
-    mutationFn: (sessionId: string) => brainstormSessionApi.createReport(sessionId),
+    mutationFn: ({ sessionId, force = false }: { sessionId: string; force?: boolean }) =>
+      brainstormSessionApi.createPrd(sessionId, force),
   });
 }
 
@@ -74,13 +54,7 @@ export function useCreateBrainstormLandingPageMutation() {
 
 export function useCreateBrainstormPitchDeckMutation() {
   return useMutation({
-    mutationFn: ({
-      sessionId,
-      format,
-    }: {
-      sessionId: string;
-      format: BrainstormPitchDeckFormat;
-    }) => brainstormSessionApi.createPitchDeck(sessionId, format),
+    mutationFn: (sessionId: string) => brainstormSessionApi.createPitchDeck(sessionId),
   });
 }
 

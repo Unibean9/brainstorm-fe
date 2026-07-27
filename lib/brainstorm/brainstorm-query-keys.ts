@@ -4,4 +4,6 @@ export const brainstormKeys = {
   transcript: (sessionId: string) =>
     [...brainstormKeys.all, "transcript", sessionId] as const,
   fillers: () => [...brainstormKeys.all, "fillers"] as const,
+  rooms: () => [...brainstormKeys.all, "rooms"] as const,
+  roomSessions: (roomId: string) => [...brainstormKeys.all, "rooms", roomId, "sessions"] as const,
 };

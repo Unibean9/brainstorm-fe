@@ -2,6 +2,8 @@
 
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Mic, MessageCircle } from "lucide-react";
 
@@ -11,7 +13,11 @@ import { useFillerThinking } from "@/hooks/useFillerThinking";
 import { useBrainstormArtifacts } from "@/hooks/useBrainstormArtifacts";
 import { cn } from "@/lib/utils";
 
+import { roomsApi } from "@/lib/api/services/rooms";
+import { brainstormKeys } from "@/lib/brainstorm/brainstorm-query-keys";
 import { engineStepNodeId } from "@/lib/brainstorm/engine-steps";
+import { formatTurnErrorCode } from "@/lib/brainstorm/turn-error-copy";
+import { navigateWithTransition } from "@/lib/motion/navigate-with-transition";
 import {
   RoomEngineRing,
   stepStatus,
@@ -42,6 +48,12 @@ const RoomHubWebgl = dynamic(
 
 export type EngineCoreState = HubWebglState;
 
+export type RoomPageProps = {
+  /** sessionId đã tồn tại — tạo trước đó qua room list. */
+  sessionId: string;
+  roomId: string;
+};
+
 const ACCENT = {
   cyan: {
     ring: "#67e8f9",
@@ -57,8 +69,9 @@ const ACCENT = {
 
 const FADE = { duration: 0.55, ease: [0.16, 1, 0.3, 1] as const };
 
-export function RoomPage() {
+export function RoomPage({ sessionId, roomId }: RoomPageProps) {
   const reduceMotion = useReducedMotion();
+  const router = useRouter();
   const [sessionStarted, setSessionStarted] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [snapFlash, setSnapFlash] = useState(false);
@@ -66,12 +79,30 @@ export function RoomPage() {
   const rootRef = useRef<HTMLDivElement>(null);
   const [dockAmt, setDockAmt] = useState(0);
 
+  const roomsQuery = useQuery({
+    queryKey: brainstormKeys.rooms(),
+    queryFn: roomsApi.list,
+    staleTime: 15_000,
+  });
+  const sessionsQuery = useQuery({
+    queryKey: brainstormKeys.roomSessions(roomId),
+    queryFn: () => roomsApi.listSessions(roomId),
+    staleTime: 5_000,
+  });
+  const roomName = roomsQuery.data?.find((r) => r.roomId === roomId)?.name;
+  const currentSessionName = sessionsQuery.data?.find((s) => s.sessionId === sessionId)?.name;
+  const switchRoom = useCallback(() => {
+    // /rooms/[roomId] không còn tồn tại — wizard ở "/" tự resume bước chọn room
+    // vì teacher đã nhớ trong localStorage.
+    navigateWithTransition(router, "/");
+  }, [router]);
+
   const brainstorm = useBrainstormSession({
+    sessionId,
     enabled: sessionStarted,
   });
 
   const {
-    sessionId,
     state,
     micActive,
     transcript,
@@ -81,6 +112,7 @@ export function RoomPage() {
     setFocusNodeId,
     connectionStatus,
     error: sessionError,
+    warning: sessionWarning,
     fillerActive,
     isTurnPending,
     startSession: connectBrainstorm,
@@ -96,7 +128,6 @@ export function RoomPage() {
   const artifacts = useBrainstormArtifacts({
     sessionId,
     sessionPhaseKey,
-    transcript,
     voiceState: state,
     isTurnPending,
   });
@@ -245,6 +276,30 @@ export function RoomPage() {
       />
 
       <AnimatePresence>
+        {sessionStarted && (sessionWarning || sessionError) ? (
+          <motion.div
+            key="turn-toast"
+            className="pointer-events-none absolute inset-x-0 top-4 z-50 flex justify-center px-4"
+            initial={reduceMotion ? false : { opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+          >
+            <p
+              className={cn(
+                "rounded-full border px-4 py-1.5 text-[11px] font-medium tracking-wide shadow-[0_8px_24px_rgba(0,0,0,0.35)]",
+                sessionError
+                  ? "border-amber-300/30 bg-[rgba(40,20,10,0.92)] text-amber-100"
+                  : "border-cyan-300/25 bg-[rgba(12,18,40,0.92)] text-cyan-100/90"
+              )}
+            >
+              {formatTurnErrorCode(sessionError ?? sessionWarning ?? "")}
+            </p>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {sessionStarted ? (
           <motion.div
             key="hud"
@@ -259,27 +314,36 @@ export function RoomPage() {
               micActive={micActive}
               fillerEnabled={fillerThinking.fillerEnabled}
               onFillerEnabledChange={fillerThinking.setFillerEnabled}
+              roomName={roomName}
+              sessionName={currentSessionName}
+              onSwitchRoom={switchRoom}
             />
             <RoomArtifactActions
               isWrapped={artifacts.isWrapped}
-              canGenerateReport={artifacts.canGenerateReport}
+              isWrapUpPhase={artifacts.isWrapUpPhase}
+              canGeneratePrd={artifacts.canGeneratePrd}
               canGenerateLanding={artifacts.canGenerateLanding}
               canGeneratePitch={artifacts.canGeneratePitch}
-              reportUrl={artifacts.reportUrl}
+              prdUrl={artifacts.prdUrl}
               landingPageUrl={artifacts.landingPageUrl}
+              landingWarnings={artifacts.landingWarnings}
               pitchDeckHtmlUrl={artifacts.pitchDeckHtmlUrl}
               pitchDeckExportUrl={artifacts.pitchDeckExportUrl}
-              pitchDeckFormat={artifacts.pitchDeckFormat}
-              reportHint={artifacts.reportHint}
-              reportError={artifacts.reportError}
+              speakerScriptUrl={artifacts.speakerScriptUrl}
+              pitchWarnings={artifacts.pitchWarnings}
+              prdHint={artifacts.prdHint}
+              prdError={artifacts.prdError}
               landingError={artifacts.landingError}
               pitchError={artifacts.pitchError}
-              isReportPending={artifacts.isReportPending}
+              isPrdPending={artifacts.isPrdPending}
               isLandingPending={artifacts.isLandingPending}
               isPitchPending={artifacts.isPitchPending}
-              onCreateReport={() => void artifacts.createReport()}
+              confirmForcePrd={artifacts.confirmForcePrd}
+              onCreatePrd={() => void artifacts.createPrd()}
+              onConfirmForcePrd={() => void artifacts.confirmCreatePrdEarly()}
+              onCancelForcePrd={artifacts.cancelCreatePrdEarly}
               onCreateLandingPage={() => void artifacts.createLandingPage()}
-              onCreatePitchDeck={(format) => void artifacts.createPitchDeck(format)}
+              onCreatePitchDeck={() => void artifacts.createPitchDeck()}
             />
           </motion.div>
         ) : null}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { FolderOpen } from "lucide-react";
 
 import type { HubWebglState } from "./room-hub-webgl";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -41,6 +42,9 @@ type SessionStatusHudProps = {
   micActive?: boolean;
   fillerEnabled?: boolean;
   onFillerEnabledChange?: (enabled: boolean) => void;
+  roomName?: string;
+  sessionName?: string;
+  onSwitchRoom?: () => void;
 };
 
 export function SessionStatusHud({
@@ -48,6 +52,9 @@ export function SessionStatusHud({
   micActive = false,
   fillerEnabled = true,
   onFillerEnabledChange,
+  roomName,
+  sessionName,
+  onSwitchRoom,
 }: SessionStatusHudProps) {
   const [now, setNow] = useState(() => new Date());
   const [weather, setWeather] = useState<WeatherInfo>({
@@ -185,10 +192,29 @@ export function SessionStatusHud({
         </div>
       </div>
 
-      {/* Status LEDs */}
-      <div className="mt-3.5 flex flex-wrap items-center gap-4 text-[10px] font-semibold tracking-[0.16em] text-white/75">
-        <StatusDot label="APEX" on />
-        <StatusDot label="LOCAL" on />
+      {/* Room / session + status LEDs */}
+      <div className="mt-3.5 flex flex-wrap items-center gap-3">
+        {onSwitchRoom ? (
+          <button
+            type="button"
+            onClick={onSwitchRoom}
+            title="Đổi phòng"
+            className="pointer-events-auto group inline-flex max-w-full items-center gap-1.5 rounded-full border border-white/12 bg-white/3 px-2.5 py-1 text-[11px] font-medium text-white/80 transition-colors hover:border-[#67e8f9]/45 hover:text-[#a5f3fc]"
+          >
+            <FolderOpen className="size-3 shrink-0 text-white/45 group-hover:text-[#67e8f9]" aria-hidden />
+            <span className="max-w-32 truncate">{roomName ?? "Room"}</span>
+            <span className="text-white/25">/</span>
+            <span className="max-w-32 truncate text-white/55 group-hover:text-[#a5f3fc]">
+              {sessionName ?? "Session"}
+            </span>
+          </button>
+        ) : (
+          <span className="inline-flex max-w-full items-center gap-1.5 text-[11px] font-medium text-white/70">
+            <span className="max-w-32 truncate">{roomName ?? "Room"}</span>
+            <span className="text-white/25">/</span>
+            <span className="max-w-32 truncate text-white/50">{sessionName ?? "Session"}</span>
+          </span>
+        )}
         <StatusDot
           label="VOICE"
           on={voiceHot}

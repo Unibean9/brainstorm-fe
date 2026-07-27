@@ -15,23 +15,19 @@ import { brainstormKeys } from "@/lib/brainstorm/brainstorm-query-keys";
 import { clampEngineStep } from "@/lib/brainstorm/engine-steps";
 import { consumeSseStream } from "@/lib/brainstorm/consume-sse-stream";
 import { BrainstormApiError } from "@/lib/brainstorm/parse-api-error";
-import {
-  clearStoredSessionId,
-  readStoredSessionId,
-  writeStoredSessionId,
-} from "@/lib/brainstorm/session-storage";
 import { brainstormSessionApi } from "@/lib/api/services/brainstormSession";
 import {
   hydrateBrainstormSessionCache,
   useBrainstormTranscriptQuery,
-  useCreateBrainstormSessionMutation,
-  useResumeBrainstormSessionMutation,
+  useLoadBrainstormSessionMutation,
 } from "@/hooks/queries/useBrainstormSessionQueries";
 import type { BrainstormSessionSnapshot, BrainstormSessionState, BrainstormPhaseKey } from "@/types/brainstorm-stream";
 
 export type BrainstormConnectionStatus = "idle" | "connecting" | "connected" | "error";
 
 type UseBrainstormSessionOptions = {
+  /** sessionId đã tồn tại — tạo trước đó qua POST /rooms/:roomId/sessions. */
+  sessionId: string;
   enabled: boolean;
 };
 
@@ -49,14 +45,11 @@ function newClientTurnId() {
 function applySnapshotToUi(
   snapshot: BrainstormSessionSnapshot,
   setters: {
-    setSessionId: (id: string) => void;
     setEngineStep: (step: number) => void;
     setState: (state: BrainstormSessionState) => void;
     setSessionPhaseKey: (phaseKey: BrainstormPhaseKey) => void;
   }
 ) {
-  writeStoredSessionId(snapshot.sessionId);
-  setters.setSessionId(snapshot.sessionId);
   setters.setEngineStep(clampEngineStep(snapshot.engineStep));
   setters.setState(snapshot.state === "processing" ? "processing" : "idle");
   setters.setSessionPhaseKey(snapshot.phaseKey);
@@ -68,9 +61,8 @@ function formatTurnError(err: unknown) {
   return "Turn stream failed";
 }
 
-export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
+export function useBrainstormSession({ sessionId, enabled }: UseBrainstormSessionOptions) {
   const queryClient = useQueryClient();
-  const [sessionId, setSessionId] = useState<string | null>(null);
   const [connectionStatus, setConnectionStatus] =
     useState<BrainstormConnectionStatus>("idle");
   const [state, setState] = useState<BrainstormSessionState>("idle");
@@ -79,6 +71,7 @@ export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
   const [sessionPhaseKey, setSessionPhaseKey] = useState<BrainstormPhaseKey>("framing");
   const [focusNodeId, setFocusNodeId] = useState<WorkflowNodeId | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [fillerActive, setFillerActive] = useState(false);
 
   const audioRef = useRef<AgentAudioPlayer | null>(null);
@@ -86,14 +79,11 @@ export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
   const turnAbortRef = useRef<AbortController | null>(null);
   const startedRef = useRef(false);
 
-  const createSessionMutation = useCreateBrainstormSessionMutation();
-  const resumeSessionMutation = useResumeBrainstormSessionMutation();
-
+  const loadSessionMutation = useLoadBrainstormSessionMutation();
   const { data: transcript = [] } = useBrainstormTranscriptQuery(sessionId);
 
   const patchTranscript = useCallback(
     (updater: (prev: TranscriptEntry[]) => TranscriptEntry[]) => {
-      if (!sessionId) return;
       queryClient.setQueryData<TranscriptEntry[]>(brainstormKeys.transcript(sessionId), (prev) =>
         updater(prev ?? [])
       );
@@ -110,21 +100,51 @@ export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
     setFillerActive(false);
   }, []);
 
+  /** Mất kết nối SSE giữa chừng không huỷ turn — đồng bộ lại UI từ snapshot thay vì đoán. */
+  const resyncFromSnapshot = useCallback(async () => {
+    try {
+      const snapshot = await brainstormSessionApi.get(sessionId);
+      applySnapshotToUi(snapshot, { setEngineStep, setState, setSessionPhaseKey });
+      hydrateBrainstormSessionCache(queryClient, snapshot);
+    } catch {
+      /* best-effort — giữ nguyên UI hiện tại nếu resync cũng lỗi */
+    }
+  }, [queryClient, sessionId]);
+
   const runTurnStream = useCallback(
     async (body: Parameters<typeof brainstormSessionApi.postTurnStream>[1]) => {
-      if (!sessionId) return;
-
       turnAbortRef.current?.abort();
       const ac = new AbortController();
       turnAbortRef.current = ac;
 
       const response = await brainstormSessionApi.postTurnStream(sessionId, body, ac.signal);
+      const contentType = response.headers.get("content-type") ?? "";
+
+      // clientTurnId trùng turn cũ: BE trả JSON thường (200 completed / 409 processing|interrupted|failed)
+      if (!contentType.includes("text/event-stream")) {
+        const json = (await response.json()) as {
+          isSuccess: boolean;
+          message: string;
+          data?: { operation?: { status?: string }; snapshot?: BrainstormSessionSnapshot };
+          error?: { code?: string };
+        };
+        if (json.data?.snapshot) {
+          applySnapshotToUi(json.data.snapshot, { setEngineStep, setState, setSessionPhaseKey });
+          hydrateBrainstormSessionCache(queryClient, json.data.snapshot);
+        }
+        if (!json.isSuccess) {
+          throw new BrainstormApiError(json.message, json.error?.code, response.status);
+        }
+        return;
+      }
+
       const ctx = {
         setState,
         setEngineStep,
         setFocusNodeId,
         setSessionPhaseKey,
         setError,
+        setWarning,
         setTranscript: patchTranscript,
         audio: ensureAudio(),
         stopFiller,
@@ -136,11 +156,17 @@ export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
           (event, envelope) => applyTurnStreamEvent(event, envelope, ctx),
           ac.signal
         );
+      } catch (err) {
+        if (!(err instanceof DOMException && err.name === "AbortError")) {
+          // Đóng kết nối giữa chừng không huỷ turn ở BE — đồng bộ lại thay vì báo lỗi cứng.
+          void resyncFromSnapshot();
+        }
+        throw err;
       } finally {
         stopFiller();
       }
     },
-    [patchTranscript, sessionId, stopFiller]
+    [patchTranscript, queryClient, resyncFromSnapshot, sessionId, stopFiller]
   );
 
   const postTurnMutation = useMutation({
@@ -149,7 +175,6 @@ export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       stopFiller();
       setError(formatTurnError(err));
-      setState("idle");
     },
   });
 
@@ -169,24 +194,9 @@ export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
     setError(null);
     setConnectionStatus("connecting");
 
-    const setters = { setSessionId, setEngineStep, setState, setSessionPhaseKey };
-
     try {
-      const storedId = readStoredSessionId();
-      if (storedId) {
-        try {
-          const snapshot = await resumeSessionMutation.mutateAsync(storedId);
-          applySnapshotToUi(snapshot, setters);
-          hydrateBrainstormSessionCache(queryClient, snapshot);
-          setConnectionStatus("connected");
-          return true;
-        } catch {
-          clearStoredSessionId();
-        }
-      }
-
-      const snapshot = await createSessionMutation.mutateAsync({});
-      applySnapshotToUi(snapshot, setters);
+      const snapshot = await loadSessionMutation.mutateAsync(sessionId);
+      applySnapshotToUi(snapshot, { setEngineStep, setState, setSessionPhaseKey });
       hydrateBrainstormSessionCache(queryClient, snapshot);
       setConnectionStatus("connected");
       return true;
@@ -196,13 +206,11 @@ export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
       setError(formatTurnError(err));
       return false;
     }
-  }, [connectionStatus, createSessionMutation, queryClient, resumeSessionMutation]);
+  }, [connectionStatus, loadSessionMutation, queryClient, sessionId]);
 
   const endSession = useCallback(() => {
     startedRef.current = false;
     teardownLive();
-    clearStoredSessionId();
-    setSessionId(null);
     setConnectionStatus("idle");
     setMicActive(false);
     setState("idle");
@@ -210,6 +218,7 @@ export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
     setSessionPhaseKey("framing");
     setFocusNodeId(null);
     setError(null);
+    setWarning(null);
     setFillerActive(false);
   }, [teardownLive]);
 
@@ -219,7 +228,8 @@ export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
         endSession();
       });
     }
-  }, [enabled, endSession]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled]);
 
   useEffect(() => {
     return () => {
@@ -230,7 +240,7 @@ export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
   const submitTurn = useCallback(
     async (text: string, options?: { optimistic?: boolean }) => {
       const trimmed = text.trim();
-      if (!trimmed || !sessionId) return;
+      if (!trimmed) return;
 
       const clientTurnId = newClientTurnId();
       if (options?.optimistic !== false) {
@@ -248,14 +258,16 @@ export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
       }
       setState("processing");
       setError(null);
+      setWarning(null);
       setFillerActive(true);
 
       await postTurnMutation.mutateAsync({
         clientTurnId,
         text: trimmed,
+        audioMode: "streaming",
       });
     },
-    [patchTranscript, postTurnMutation, sessionId]
+    [patchTranscript, postTurnMutation]
   );
 
   const sendText = useCallback(
@@ -266,7 +278,7 @@ export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
   );
 
   const toggleMic = useCallback(async () => {
-    if (!sessionId || state === "processing" || state === "agent-speaking") return;
+    if (state === "processing" || state === "agent-speaking") return;
 
     if (!micActive) {
       setMicActive(true);
@@ -302,7 +314,7 @@ export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
       setState("idle");
       setError(err instanceof Error ? err.message : "Nhận giọng nói thất bại");
     }
-  }, [micActive, sessionId, state, submitTurn]);
+  }, [micActive, state, submitTurn]);
 
   return {
     sessionId,
@@ -315,6 +327,7 @@ export function useBrainstormSession({ enabled }: UseBrainstormSessionOptions) {
     focusNodeId,
     setFocusNodeId,
     error,
+    warning,
     fillerActive,
     isTurnPending: postTurnMutation.isPending,
     startSession,

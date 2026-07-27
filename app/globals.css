@@ -12,6 +12,21 @@
   --brand-sky: #0ea5e9;
   --brand-ink: #334155;
 
+  /* Engine dark — product surfaces (teacher gate, rooms, session workspace). Pulled 1:1
+     from the session workspace's established navy/cyan/gold system, not a new palette. */
+  --engine-bg: #060a14;
+  --engine-bg-deep: #041018;
+  --engine-panel: #0b1528;
+  --engine-panel-strong: #07111f;
+  --engine-border: rgba(103, 232, 249, 0.16);
+  --engine-cyan: #67e8f9;
+  --engine-cyan-strong: #22d3ee;
+  --engine-cyan-soft: #0ea5e9;
+  --engine-cyan-tint: #e0f2fe;
+  --engine-gold: #fbbf24;
+  --engine-gold-soft: #fde68a;
+  --engine-alert: #ea580c;
+
   --background: #faf7f2;
   --foreground: #1c1917;
 
@@ -99,6 +114,10 @@
   --color-brand-coral: var(--brand-coral);
   --color-brand-sky: var(--brand-sky);
   --color-brand-ink: var(--brand-ink);
+  --color-engine-bg: var(--engine-bg);
+  --color-engine-panel: var(--engine-panel);
+  --color-engine-cyan: var(--engine-cyan);
+  --color-engine-gold: var(--engine-gold);
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -199,5 +218,60 @@
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+
+  .constellation-line {
+    animation: none !important;
+    stroke-dashoffset: 0 !important;
+  }
+}
+
+/* Constellation grid — glow connector lines drawn between room/session nodes
+   (components/brainstorm/constellation-grid.tsx). Draw-in animates once on mount. */
+@keyframes constellation-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* Engine dark surface — static fallback color behind the animated RoomHubWebgl canvas
+   (EngineAmbientBg) on product screens. Matches the canvas's deepest gradient stop so
+   there's no flash before the canvas mounts / under no-JS. */
+.engine-surface {
+  background-color: #041e30;
+}
+
+/* Page-level view transitions — crossfade + soft rise, disabled under reduced motion above. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.32s;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+::view-transition-old(root) {
+  animation-name: brainstorm-fade-out;
+}
+
+::view-transition-new(root) {
+  animation-name: brainstorm-fade-in;
+}
+
+@keyframes brainstorm-fade-out {
+  to {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.994);
+  }
+}
+
+@keyframes brainstorm-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(1.004);
   }
 }

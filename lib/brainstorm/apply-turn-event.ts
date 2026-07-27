@@ -1,10 +1,10 @@
 import type { TranscriptEntry } from "@/app/session/data/room-graph-types";
 import type { WorkflowNodeId } from "@/app/session/components/room-orb-layout";
 import { mapBePhaseToUi } from "@/lib/brainstorm/map-session-snapshot";
-import { clampEngineStep, normalizeEngineStepPayload } from "@/lib/brainstorm/engine-steps";
+import { normalizeEngineStepPayload } from "@/lib/brainstorm/engine-steps";
 import type { AgentAudioPlayer } from "@/lib/audio/agent-audio-player";
 import type {
-  AgentAudioReadyPayload,
+  AgentAudioChunkPayload,
   AgentRunStartedPayload,
   AgentStreamErrorPayload,
   AgentTextCompletedPayload,
@@ -15,6 +15,9 @@ import type {
   SessionStateChangedPayload,
   StreamEnvelope,
 } from "@/types/brainstorm-stream";
+
+/** Lỗi không chặn turn — chỉ mất/ngắt audio, text vẫn hoàn tất bình thường. */
+const SOFT_WARNING_CODES = new Set(["audio_unavailable", "audio_truncated"]);
 
 function formatTime(ts: number) {
   return new Date(ts).toLocaleTimeString("vi-VN", {
@@ -54,10 +57,13 @@ export type TurnEventContext = {
   setEngineStep: (step: number) => void;
   setFocusNodeId: (id: WorkflowNodeId | null) => void;
   setSessionPhaseKey: (phaseKey: BrainstormPhaseKey) => void;
+  /** Lỗi chặn turn (room_busy, turn_failed, client_disconnected) — cho gửi lại với clientTurnId mới. */
   setError: (message: string | null) => void;
+  /** Lỗi không chặn (audio_unavailable, audio_truncated) — turn vẫn hoàn tất, chỉ mất audio. */
+  setWarning: (message: string | null) => void;
   setTranscript: (updater: (prev: TranscriptEntry[]) => TranscriptEntry[]) => void;
   audio: AgentAudioPlayer;
-  /** Dừng filler thinking — gọi khi text-done, idle, lỗi */
+  /** Dừng filler thinking — gọi khi có audio thật đầu tiên, idle, hoặc lỗi */
   stopFiller?: () => void;
 };
 
@@ -67,8 +73,7 @@ export function applyTurnStreamEvent(
   ctx: TurnEventContext
 ) {
   switch (event) {
-    case "state":
-    case "session-state": {
+    case "state": {
       const { data } = envelope as SessionStateChangedPayload;
       ctx.setState(data.state);
       if (data.state !== "processing") ctx.stopFiller?.();
@@ -76,7 +81,6 @@ export function applyTurnStreamEvent(
     }
     case "agent-run-started": {
       const { data, ts } = envelope as AgentRunStartedPayload;
-      ctx.stopFiller?.();
       ctx.setTranscript((prev) => {
         if (prev.some((e) => e.id === data.messageId)) return prev;
         return [
@@ -100,7 +104,6 @@ export function applyTurnStreamEvent(
     }
     case "text-done": {
       const { data, ts } = envelope as AgentTextCompletedPayload;
-      ctx.stopFiller?.();
       ctx.setSessionPhaseKey(data.phaseKey);
       const phaseKey = mapBePhaseToUi(data.phaseKey);
       ctx.setTranscript((prev) => {
@@ -120,19 +123,16 @@ export function applyTurnStreamEvent(
       });
       break;
     }
-    case "agent-audio": {
-      const { data } = envelope as AgentAudioReadyPayload;
+    case "agent-audio-chunk": {
+      const { data } = envelope as AgentAudioChunkPayload;
       ctx.stopFiller?.();
       ctx.setState("agent-speaking");
-      void ctx.audio
-        .playOnce({
-          chunkBase64: data.audioBase64,
-          encoding: "audio/wav",
-        })
-        .catch(() => undefined)
-        .then(() => {
-          ctx.setState("idle");
-        });
+      ctx.audio.enqueue({ chunkBase64: data.audioBase64, encoding: data.encoding });
+      break;
+    }
+    case "agent-audio-done": {
+      // Queue tự phát hết phần đã enqueue — không cần hành động, chỉ đảm bảo filler đã tắt.
+      ctx.stopFiller?.();
       break;
     }
     case "engine-step": {
@@ -144,10 +144,13 @@ export function applyTurnStreamEvent(
     }
     case "error": {
       const { data } = envelope as AgentStreamErrorPayload;
-      if (data.code === "audio_unavailable" && data.recoverable) break;
+      if (SOFT_WARNING_CODES.has(data.code)) {
+        ctx.setWarning(data.code);
+        break;
+      }
+      // room_busy | turn_failed | client_disconnected — turn coi như kết thúc, cho gửi lại
       ctx.stopFiller?.();
       ctx.setError(data.code);
-      ctx.setState("idle");
       break;
     }
     default:

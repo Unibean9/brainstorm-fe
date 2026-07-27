@@ -11,6 +11,17 @@ colors:
   muted-fg: "#78716c"
   border: "#e7e0d5"
   card: "#ffffff"
+  engine-bg: "#060a14"
+  engine-bg-deep: "#041018"
+  engine-panel: "#0b1528"
+  engine-panel-strong: "#07111f"
+  engine-cyan: "#67e8f9"
+  engine-cyan-strong: "#22d3ee"
+  engine-cyan-soft: "#0ea5e9"
+  engine-cyan-tint: "#e0f2fe"
+  engine-gold: "#fbbf24"
+  engine-gold-soft: "#fde68a"
+  engine-alert: "#ea580c"
 typography:
   display:
     fontFamily: "Quicksand, system-ui, sans-serif"
@@ -54,7 +65,9 @@ components:
 
 ## Overview
 
-Visual system cho **AI Brainstorm Room** landing: workshop ấm (canvas `#faf7f2`, sticky `#fde047`, coral `#ea580c`), hero **force-directed knowledge graph** đồng bộ scroll. Register **brand** — design là sản phẩm tại landing; app surfaces sau sẽ kế thừa token nhưng có thể dense hơn.
+Visual system cho **AI Brainstorm Room** landing: workshop ấm (canvas `#faf7f2`, sticky `#fde047`, coral `#ea580c`), hero **force-directed knowledge graph** đồng bộ scroll. Register **brand** — design là sản phẩm tại landing.
+
+App/product surfaces (teacher gate, room list, room detail, session workspace) dùng hệ **Engine Dark** riêng — xem `## Engine Dark (product surfaces)` bên dưới — không kế thừa canvas sáng của landing.
 
 **Color strategy:** Committed warm — coral primary trên nền canvas, accent sticky cho highlight graph node, sky cho secondary/links.
 
@@ -116,6 +129,45 @@ links: { source, target }[]
 
 - Triggers: luôn `render={<Button />}` — không nest button.
 - `DropdownMenuLabel` trong `DropdownMenuGroup`.
+
+## Engine Dark (product surfaces)
+
+Teacher gate, room list, room detail, session workspace — pulled 1:1 từ palette/vibe đã có sẵn
+trong session workspace (`app/session/components/`), không phải palette mới. Register **product**:
+familiarity > surprise, cùng vocabulary xuyên suốt thay vì mỗi màn một kiểu.
+
+**Color strategy:** Committed dark — nền navy sâu, cyan cho trạng thái/tương tác chính, gold cho
+trạng thái "done/success", coral chỉ dùng cho alert (không dùng làm CTA ở đây, khác với landing).
+
+| Role | Token | Hex | Use |
+|------|-------|-----|-----|
+| Bg | `--engine-bg` / `--engine-bg-deep` | `#060a14` / `#041018` | Nền trang, đáy gradient |
+| Panel | `--engine-panel` / `--engine-panel-strong` | `#0b1528` / `#07111f` | Card/panel glass |
+| Cyan | `--engine-cyan` / `--engine-cyan-strong` | `#67e8f9` / `#22d3ee` | Primary action, active state, glow chính |
+| Cyan soft | `--engine-cyan-soft` / `--engine-cyan-tint` | `#0ea5e9` / `#e0f2fe` | Link phụ, text nhấn nhẹ |
+| Gold | `--engine-gold` / `--engine-gold-soft` | `#fbbf24` / `#fde68a` | Trạng thái hoàn tất/"done", accent phụ cho variety |
+| Alert | `--engine-alert` (= `--brand-coral`) | `#ea580c` | Chỉ dùng cho lỗi/cảnh báo — không dùng làm CTA |
+
+**Components:**
+
+- **`EngineAmbientBg`** (`components/brainstorm/engine-ambient-bg.tsx`): render lại chính
+  `RoomHubWebgl` (canvas 2D đã dùng trong session workspace) với `armed={false}` — giữ gradient
+  navy sống động + breathing ring, bỏ orb trung tâm. Dùng `next/dynamic` `ssr:false`, đặt `fixed
+  inset-0 z-0` phía sau nội dung. Đây là cùng một component thật, không phải bản CSS mô phỏng lại —
+  tránh lệch tông giữa product screens và workspace. `.engine-surface` (`globals.css`) chỉ còn là
+  màu nền fallback tĩnh (khớp stop gradient sâu nhất của canvas) trước khi canvas mount / no-JS.
+- **`EngineCard`** (`components/brainstorm/engine-card.tsx`): panel kính (`linear-gradient` navy) +
+  glow ring viền theo tone (cyan/gold) + hairline gradient trên đỉnh — cùng motif "neon underline"
+  dùng trong `SessionStatusHud`/`RoomArtifactActions`. Interactive variant nâng bằng spring khi
+  hover/focus, glow tăng cường.
+- **Section label**: nhãn uppercase tracked + gạch gradient cyan glow bên dưới (xem `SectionLabel`
+  trong `room-list-screen.tsx`/`room-detail-screen.tsx`) — 1 motif nhất quán, không phải eyebrow
+  lặp lại mọi section.
+- **Nút chính**: pill viền cyan glow (`border-[#22d3ee]/50` + `box-shadow` glow nhẹ), không nền đặc —
+  khác `button-primary` coral-fill của landing (đúng chủ ý, hai register khác nhau).
+- **View Transitions**: room card → room detail dùng `view-transition-name` chung để morph mượt;
+  toàn trang crossfade nhẹ qua `::view-transition-old/new(root)` trong `globals.css`, tắt hoàn toàn
+  dưới `prefers-reduced-motion`.
 
 ## Do's and Don'ts
 

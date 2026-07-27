@@ -37,7 +37,7 @@ export function RoomStandbyGate({
   const blocked = connecting;
 
   const hint = connecting
-    ? "Đang tạo phiên…"
+    ? "Đang kết nối phiên…"
     : error
       ? error
       : snapStatus === "listening"

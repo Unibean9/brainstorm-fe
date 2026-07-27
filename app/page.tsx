@@ -1,4 +1,4 @@
-import { RoomPage } from "./session/components/room-page";
+import { OnboardingWizard } from "@/components/brainstorm/onboarding-wizard";
 import { buildPageMetadata } from "@/lib/seo/metadata";
 import { SITE } from "@/lib/seo/site";
 
@@ -9,5 +9,5 @@ export const metadata = buildPageMetadata({
 });
 
 export default function HomePage() {
-  return <RoomPage />;
+  return <OnboardingWizard />;
 }

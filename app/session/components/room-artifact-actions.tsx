@@ -1,37 +1,41 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Loader2 } from "lucide-react";
-import { motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 
 import { cn } from "@/lib/utils";
 import { downloadArtifactFromUrl } from "@/lib/brainstorm/download-artifact";
-import type { BrainstormPitchDeckFormat } from "@/types/brainstorm-stream";
 
-const PITCH_FORMATS: BrainstormPitchDeckFormat[] = ["pdf", "ppt", "pptx"];
 const CYAN_GLOW =
   "0 0 8px rgba(34,211,238,0.55), 0 0 22px rgba(34,211,238,0.35), 0 0 40px rgba(56,189,248,0.2)";
 
 type RoomArtifactActionsProps = {
   isWrapped: boolean;
-  canGenerateReport: boolean;
+  isWrapUpPhase: boolean;
+  canGeneratePrd: boolean;
   canGenerateLanding: boolean;
   canGeneratePitch: boolean;
-  reportUrl?: string;
+  prdUrl?: string;
   landingPageUrl?: string;
+  landingWarnings?: string[];
   pitchDeckHtmlUrl?: string;
   pitchDeckExportUrl?: string;
-  pitchDeckFormat?: string;
-  reportHint?: string | null;
-  reportError?: string | null;
+  speakerScriptUrl?: string;
+  pitchWarnings?: string[];
+  prdHint?: string | null;
+  prdError?: string | null;
   landingError?: string | null;
   pitchError?: string | null;
-  isReportPending?: boolean;
+  isPrdPending?: boolean;
   isLandingPending?: boolean;
   isPitchPending?: boolean;
-  onCreateReport: () => void;
+  confirmForcePrd: boolean;
+  onCreatePrd: () => void;
+  onConfirmForcePrd: () => void;
+  onCancelForcePrd: () => void;
   onCreateLandingPage: () => void;
-  onCreatePitchDeck: (format: BrainstormPitchDeckFormat) => void;
+  onCreatePitchDeck: () => void;
 };
 
 function downloadArtifact(path?: string, filename?: string) {
@@ -97,22 +101,34 @@ function GlowBtn({
 function Col({
   code,
   hot,
+  warnings,
   children,
 }: {
   code: string;
   hot?: boolean;
+  warnings?: string[];
   children: React.ReactNode;
 }) {
   return (
     <div className="flex min-w-[4.5rem] flex-col items-end gap-1">
       <p
         className={cn(
-          "text-[1.35rem] font-semibold leading-none tracking-tight sm:text-[1.5rem]",
+          "flex items-center gap-1 text-[1.35rem] font-semibold leading-none tracking-tight sm:text-[1.5rem]",
           hot ? "text-[#e0f2fe]" : "text-white/30"
         )}
         style={hot ? { textShadow: CYAN_GLOW } : undefined}
       >
         {code}
+        {warnings && warnings.length > 0 ? (
+          <span
+            className="pointer-events-auto size-1.5 shrink-0 rounded-full"
+            style={{
+              background: "#fbbf24",
+              boxShadow: "0 0 5px rgba(251,191,36,0.9), 0 0 10px rgba(245,158,11,0.5)",
+            }}
+            title={warnings.join("\n")}
+          />
+        ) : null}
       </p>
       {children}
     </div>
@@ -121,42 +137,47 @@ function Col({
 
 export function RoomArtifactActions({
   isWrapped,
-  canGenerateReport,
+  isWrapUpPhase,
+  canGeneratePrd,
   canGenerateLanding,
   canGeneratePitch,
-  reportUrl,
+  prdUrl,
   landingPageUrl,
+  landingWarnings,
   pitchDeckHtmlUrl,
   pitchDeckExportUrl,
-  pitchDeckFormat,
-  reportHint,
-  reportError,
+  speakerScriptUrl,
+  pitchWarnings,
+  prdHint,
+  prdError,
   landingError,
   pitchError,
-  isReportPending,
+  isPrdPending,
   isLandingPending,
   isPitchPending,
-  onCreateReport,
+  confirmForcePrd,
+  onCreatePrd,
+  onConfirmForcePrd,
+  onCancelForcePrd,
   onCreateLandingPage,
   onCreatePitchDeck,
 }: RoomArtifactActionsProps) {
   const reduceMotion = useReducedMotion();
-  const [pitchFormat, setPitchFormat] = useState<BrainstormPitchDeckFormat>("pdf");
 
   const pitchReady = Boolean(pitchDeckHtmlUrl || pitchDeckExportUrl);
   const deliverablePct = useMemo(() => {
     let n = 0;
-    if (reportUrl) n += 34;
+    if (prdUrl) n += 34;
     if (landingPageUrl) n += 33;
     if (pitchReady) n += 33;
     return Math.min(100, n);
-  }, [landingPageUrl, pitchReady, reportUrl]);
+  }, [landingPageUrl, pitchReady, prdUrl]);
 
   const blockHint =
-    reportError || landingError || pitchError
-      ? reportError || landingError || pitchError
-      : !canGenerateReport && reportHint
-        ? reportHint
+    prdError || landingError || pitchError
+      ? prdError || landingError || pitchError
+      : !canGeneratePrd && prdHint
+        ? prdHint
         : null;
 
   return (
@@ -171,7 +192,16 @@ export function RoomArtifactActions({
         <p className="text-[10px] font-semibold tracking-[0.3em] text-[#67e8f9]/90">OUTPUTS</p>
         {isWrapped ? (
           <span className="text-[9px] font-semibold tracking-[0.12em] text-[#fde68a]/90">WRAPPED</span>
-        ) : null}
+        ) : (
+          <span
+            className={cn(
+              "text-[9px] font-semibold tracking-[0.12em]",
+              isWrapUpPhase ? "text-[#a7f3d0]/90" : "text-white/35"
+            )}
+          >
+            {isWrapUpPhase ? "WRAP-UP" : "IN PROGRESS"}
+          </span>
+        )}
       </div>
       <div className="relative mb-3 h-[3px] w-full overflow-visible">
         <div
@@ -185,22 +215,22 @@ export function RoomArtifactActions({
       </div>
 
       <div className="flex items-start justify-end gap-5 sm:gap-6">
-        <Col code="RPT" hot={Boolean(reportUrl) || isReportPending}>
-          {reportUrl ? (
-            <GlowBtn onClick={() => downloadArtifact(reportUrl, "brainstorm-report.md")}>MD</GlowBtn>
+        <Col code="PRD" hot={Boolean(prdUrl) || isPrdPending}>
+          {prdUrl ? (
+            <GlowBtn onClick={() => downloadArtifact(prdUrl, "brainstorm-prd.md")}>MD</GlowBtn>
           ) : (
             <GlowBtn
-              disabled={!canGenerateReport}
-              pending={isReportPending}
-              onClick={onCreateReport}
-              title={reportHint ?? undefined}
+              disabled={!canGeneratePrd}
+              pending={isPrdPending}
+              onClick={onCreatePrd}
+              title={prdHint ?? undefined}
             >
               GEN
             </GlowBtn>
           )}
         </Col>
 
-        <Col code="WEB" hot={Boolean(landingPageUrl) || isLandingPending}>
+        <Col code="WEB" hot={Boolean(landingPageUrl) || isLandingPending} warnings={landingWarnings}>
           {landingPageUrl ? (
             <GlowBtn onClick={() => downloadArtifact(landingPageUrl, "landing-page.html")} amber>
               DL
@@ -217,53 +247,40 @@ export function RoomArtifactActions({
           )}
         </Col>
 
-        <Col code="DCK" hot={pitchReady || isPitchPending}>
+        <Col code="DCK" hot={pitchReady || isPitchPending} warnings={pitchWarnings}>
           {pitchReady ? (
-            <span className="pointer-events-auto flex gap-2">
+            <span className="pointer-events-auto flex flex-wrap justify-end gap-2">
               {pitchDeckHtmlUrl ? (
                 <GlowBtn onClick={() => downloadArtifact(pitchDeckHtmlUrl, "pitch-deck.html")}>HTML</GlowBtn>
               ) : null}
               {pitchDeckExportUrl ? (
-                <GlowBtn onClick={() => downloadArtifact(pitchDeckExportUrl, `pitch-deck.${(pitchDeckFormat ?? pitchFormat) === "pdf" ? "pdf" : "pptx"}`)} amber>
-                  DL
+                <GlowBtn onClick={() => downloadArtifact(pitchDeckExportUrl, "pitch-deck.pdf")} amber>
+                  PDF
+                </GlowBtn>
+              ) : null}
+              {speakerScriptUrl ? (
+                <GlowBtn onClick={() => downloadArtifact(speakerScriptUrl, "speaker-script.md")}>
+                  SCRIPT
                 </GlowBtn>
               ) : null}
             </span>
           ) : (
-            <span className="pointer-events-auto flex flex-col items-end gap-1">
-              <span className="flex gap-1.5">
-                {PITCH_FORMATS.map((f) => (
-                  <button
-                    key={f}
-                    type="button"
-                    disabled={!canGeneratePitch || isPitchPending}
-                    onClick={() => setPitchFormat(f)}
-                    className={cn(
-                      "text-[8px] font-semibold tracking-[0.12em]",
-                      pitchFormat === f ? "text-[#fde68a]" : "text-white/30"
-                    )}
-                  >
-                    {f.toUpperCase()}
-                  </button>
-                ))}
-              </span>
-              <GlowBtn
-                disabled={!canGeneratePitch}
-                pending={isPitchPending}
-                onClick={() => onCreatePitchDeck(pitchFormat)}
-                amber
-              >
-                GEN
-              </GlowBtn>
-            </span>
+            <GlowBtn
+              disabled={!canGeneratePitch}
+              pending={isPitchPending}
+              onClick={onCreatePitchDeck}
+              amber
+            >
+              GEN
+            </GlowBtn>
           )}
         </Col>
       </div>
 
       <div className="mt-3 flex items-center justify-end gap-3 text-[9px] font-semibold tracking-[0.14em] text-white/60">
         <span className="inline-flex items-center gap-1">
-          <StatusDot on={Boolean(reportUrl)} />
-          RPT
+          <StatusDot on={Boolean(prdUrl)} />
+          PRD
         </span>
         <span className="inline-flex items-center gap-1">
           <StatusDot on={Boolean(landingPageUrl)} />
@@ -291,6 +308,38 @@ export function RoomArtifactActions({
           {blockHint}
         </p>
       ) : null}
+
+      <AnimatePresence>
+        {confirmForcePrd ? (
+          <motion.div
+            className="pointer-events-auto mt-3 rounded-lg border border-amber-300/25 bg-[rgba(12,18,40,0.96)] p-3 text-left shadow-[0_8px_28px_rgba(0,0,0,0.4)]"
+            initial={reduceMotion ? false : { opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.2 }}
+          >
+            <p className="text-[11px] leading-snug text-amber-100/90">
+              Phiên chưa tới bước tổng kết — PRD tạo lúc này có thể sơ sài. Vẫn muốn tạo?
+            </p>
+            <div className="mt-2 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={onCancelForcePrd}
+                className="text-[10px] font-semibold tracking-[0.1em] text-white/50 hover:text-white/80"
+              >
+                HUỶ
+              </button>
+              <button
+                type="button"
+                onClick={onConfirmForcePrd}
+                className="text-[10px] font-semibold tracking-[0.1em] text-[#fde68a] hover:text-[#fef3c7]"
+              >
+                VẪN TẠO
+              </button>
+            </div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </motion.aside>
   );
 }
