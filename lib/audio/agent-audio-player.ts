@@ -35,6 +35,11 @@ export class AgentAudioPlayer {
     return this.playing;
   }
 
+  /** Resolve khi queue hiện tại phát xong hết — dùng để đợi audio thật xong trước khi đổi UI state. */
+  whenIdle(): Promise<void> {
+    return this.queue;
+  }
+
   enqueue(chunk: AudioChunkInput) {
     this.queue = this.queue.then(() => this.playChunk(chunk)).catch(() => undefined);
     return this.queue;

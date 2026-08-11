@@ -20,6 +20,10 @@ export interface ApiError {
   message: string;
   status: boolean;
   data?: unknown;
+  /** true khi request bị hủy do vượt axios `timeout` — không có nghĩa là backend thất bại. */
+  isTimeout?: boolean;
+  /** true khi request không nhận được response nào (mất mạng/proxy cắt) — cũng không có nghĩa backend thất bại. */
+  isNetworkError?: boolean;
 }
 
 export interface RequestParams {
@@ -140,6 +144,8 @@ class ApiService {
           message: error.response?.data?.message || error.message || "Có lỗi xảy ra",
           status: false,
           data: error.response?.data,
+          isTimeout: error.code === "ECONNABORTED",
+          isNetworkError: !error.response && error.code !== "ECONNABORTED",
         };
 
         return Promise.reject(apiError);

@@ -11,11 +11,23 @@ import {
   readFillerEnabledPreference,
   writeFillerEnabledPreference,
 } from "@/lib/brainstorm/filler-storage";
-import type { BrainstormFillerAsset } from "@/types/brainstorm-stream";
+import type { BrainstormFillerAsset, BrainstormPhaseKey } from "@/types/brainstorm-stream";
 
-function pickRandomFiller(fillers: BrainstormFillerAsset[]) {
+/** Ưu tiên filler khớp cả voice lẫn phase, rồi khớp voice, rồi bất kỳ — tránh lẫn giọng/phase khác. */
+function pickFiller(
+  fillers: BrainstormFillerAsset[],
+  phaseKey: BrainstormPhaseKey | null,
+  voiceId: string | null
+) {
   if (!fillers.length) return null;
-  return fillers[Math.floor(Math.random() * fillers.length)]!;
+
+  const byVoiceAndPhase = fillers.filter(
+    (f) => (!voiceId || f.voiceId === voiceId) && (!phaseKey || f.phase === phaseKey)
+  );
+  const byVoice = fillers.filter((f) => !voiceId || f.voiceId === voiceId);
+  const pool = byVoiceAndPhase.length ? byVoiceAndPhase : byVoice.length ? byVoice : fillers;
+
+  return pool[Math.floor(Math.random() * pool.length)]!;
 }
 
 type UseFillerThinkingOptions = {
@@ -23,9 +35,16 @@ type UseFillerThinkingOptions = {
   sessionActive: boolean;
   /** Một turn đang chờ agent — phát filler đúng một lần */
   isProcessing: boolean;
+  phaseKey?: BrainstormPhaseKey | null;
+  voiceId?: string | null;
 };
 
-export function useFillerThinking({ sessionActive, isProcessing }: UseFillerThinkingOptions) {
+export function useFillerThinking({
+  sessionActive,
+  isProcessing,
+  phaseKey = null,
+  voiceId = null,
+}: UseFillerThinkingOptions) {
   const [enabled, setEnabledState] = useState(() => readFillerEnabledPreference());
   const playerRef = useRef<FillerThinkingPlayer | null>(null);
   const playedThisTurnRef = useRef(false);
@@ -61,7 +80,7 @@ export function useFillerThinking({ sessionActive, isProcessing }: UseFillerThin
 
     if (playedThisTurnRef.current) return;
 
-    const filler = pickRandomFiller(catalog?.fillers ?? []);
+    const filler = pickFiller(catalog?.fillers ?? [], phaseKey, voiceId);
     if (!filler) return;
 
     playedThisTurnRef.current = true;
@@ -71,7 +90,7 @@ export function useFillerThinking({ sessionActive, isProcessing }: UseFillerThin
     return () => {
       player.stop();
     };
-  }, [shouldPlay, catalog]);
+  }, [shouldPlay, catalog, phaseKey, voiceId]);
 
   useEffect(() => {
     return () => {

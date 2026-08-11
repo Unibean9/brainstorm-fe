@@ -117,6 +117,8 @@ export type BrainstormPitchDeckResponse = {
 export type BrainstormFillerAsset = {
   name: string;
   url: string;
+  phase?: string;
+  voiceId?: string;
 };
 
 export type BrainstormFillersResponse = {

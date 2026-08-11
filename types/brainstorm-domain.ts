@@ -1,4 +1,4 @@
-/** Teacher — định danh, không phải xác thực. Xem docs/frontend-integration-guide.md §2. */
+/** Teacher — định danh, không phải xác thực. Xem docs/system-architecture.md / docs/code-standards.md. */
 export type Teacher = {
   teacherId: string;
   code: string;
@@ -43,6 +43,12 @@ export type RoomSessionSummary = {
 
 export type CreateRoomSessionRequest = {
   name: string;
+  voiceId: string;
+};
+
+export type BrainstormVoice = {
+  voiceId: string;
+  label: string;
 };
 
 export type CloudSyncFailedRecord = {

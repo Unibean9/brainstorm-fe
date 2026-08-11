@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { teachersApi } from "@/lib/api/services/teachers";
 import { roomsApi } from "@/lib/api/services/rooms";
+import { voicesApi } from "@/lib/api/services/voices";
 import { brainstormKeys } from "@/lib/brainstorm/brainstorm-query-keys";
 import {
   clearStoredTeacher,
@@ -233,6 +234,7 @@ export function OnboardingWizard() {
   const [name, setName] = useState("");
   const [roomName, setRoomName] = useState("");
   const [sessionName, setSessionName] = useState("");
+  const [selectedVoiceId, setSelectedVoiceId] = useState<string | null>(null);
   const [stepError, setStepError] = useState<string | null>(null);
   const [pendingCode, setPendingCode] = useState<string | null>(null);
 
@@ -266,6 +268,17 @@ export function OnboardingWizard() {
     enabled: step === 3 && Boolean(selectedRoom),
     staleTime: 5_000,
   });
+
+  const voicesQuery = useQuery({
+    queryKey: brainstormKeys.voices(),
+    queryFn: voicesApi.list,
+    enabled: step === 3,
+    staleTime: Infinity,
+  });
+
+  // selectedVoiceId chưa từng set thủ công (null) → mặc định về preset đầu tiên,
+  // tính lại ngay trong render thay vì setState trong effect (tránh cascading render).
+  const effectiveVoiceId = selectedVoiceId ?? voicesQuery.data?.[0]?.voiceId ?? null;
 
   const registerTeacherMutation = useMutation({
     mutationFn: teachersApi.register,
@@ -303,7 +316,8 @@ export function OnboardingWizard() {
   });
 
   const createSessionMutation = useMutation({
-    mutationFn: (name: string) => roomsApi.createSession(selectedRoom!.roomId, { name }),
+    mutationFn: ({ name, voiceId }: { name: string; voiceId: string }) =>
+      roomsApi.createSession(selectedRoom!.roomId, { name, voiceId }),
     onSuccess: (snapshot) => {
       navigateWithTransition(router, `/rooms/${selectedRoom!.roomId}/sessions/${snapshot.sessionId}`);
     },
@@ -350,8 +364,12 @@ export function OnboardingWizard() {
       setStepError("Đặt tên session trước đã.");
       return;
     }
+    if (!effectiveVoiceId) {
+      setStepError("Chọn giọng đọc trước đã.");
+      return;
+    }
     setStepError(null);
-    createSessionMutation.mutate(trimmed);
+    createSessionMutation.mutate({ name: trimmed, voiceId: effectiveVoiceId });
   };
 
   const goToStep = (target: WizardStep) => {
@@ -565,6 +583,28 @@ export function OnboardingWizard() {
                           placeholder="Tên session, vd. Brainstorm sáng thứ 2"
                           className={engineInputClass}
                         />
+                        <div className="flex flex-col gap-1.5">
+                          <Label className="text-[11px] font-semibold tracking-[0.08em] text-white/45">
+                            GIỌNG ĐỌC
+                          </Label>
+                          <div className="flex gap-2">
+                            {(voicesQuery.data ?? []).map((voice) => (
+                              <button
+                                key={voice.voiceId}
+                                type="button"
+                                onClick={() => setSelectedVoiceId(voice.voiceId)}
+                                className={cn(
+                                  "flex-1 rounded-lg border px-3 py-2 text-[13px] font-medium transition-colors",
+                                  effectiveVoiceId === voice.voiceId
+                                    ? "border-[#fbbf24]/60 bg-[#fbbf24]/10 text-[#fde68a]"
+                                    : "border-white/12 text-white/50 hover:border-white/25 hover:text-white/75"
+                                )}
+                              >
+                                {voice.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
                         <WizardSubmitRow
                           pending={createSessionMutation.isPending}
                           label="Bắt đầu session"

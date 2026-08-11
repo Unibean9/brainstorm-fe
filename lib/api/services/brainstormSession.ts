@@ -16,8 +16,17 @@ import apiService from "../core";
 
 const BASE = "api/v1/brainstorm/sessions";
 
-/** landing-page / pitch-deck: server bound tối đa 15 phút (retry brief+lint tới 3 lần). */
-const ARTIFACT_GENERATION_TIMEOUT_MS = 15 * 60_000;
+/**
+ * landing-page / pitch-deck: server bound tối đa 15 phút (ARTIFACT_DEADLINE_MS, retry
+ * brief+lint tới 3 lần + đo layout Puppeteer). Client timeout phải dài hơn ngân sách
+ * backend một khoảng an toàn — đặt bằng nhau tuyệt đối nghĩa là gần như không có margin,
+ * bất kỳ độ trễ mạng/proxy nào cũng đủ khiến client timeout ngay trước/đúng lúc backend xong.
+ */
+const ARTIFACT_BACKEND_BUDGET_MS = 15 * 60_000;
+const ARTIFACT_GENERATION_TIMEOUT_MS = ARTIFACT_BACKEND_BUDGET_MS + 80_000;
+
+/** PRD không có deadline constant tường minh ở backend — dùng cùng ngân sách client để không cắt sớm hơn landing/deck. */
+const PRD_GENERATION_TIMEOUT_MS = ARTIFACT_GENERATION_TIMEOUT_MS;
 
 export const brainstormSessionApi = {
   /** Snapshot đầy đủ — dùng để resume sau F5/mất kết nối. Không cần header. */
@@ -63,7 +72,7 @@ export const brainstormSessionApi = {
     const response = await apiService.post<ApiResponse<BrainstormPrdResponse>>(
       `${BASE}/${sessionId}/prd${query}`,
       {},
-      withTeacherHeader()
+      { ...withTeacherHeader(), timeout: PRD_GENERATION_TIMEOUT_MS }
     );
     return response.data.data;
   },

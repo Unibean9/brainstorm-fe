@@ -9,13 +9,25 @@ export class BrainstormApiError extends Error {
   code?: string;
   recoverable?: boolean;
   status?: number;
+  /** timeout/network error — request có thể chưa thật sự thất bại ở backend, cần đối chiếu lại. */
+  isTimeout?: boolean;
+  isNetworkError?: boolean;
 
-  constructor(message: string, code?: string, status?: number, recoverable?: boolean) {
+  constructor(
+    message: string,
+    code?: string,
+    status?: number,
+    recoverable?: boolean,
+    isTimeout?: boolean,
+    isNetworkError?: boolean
+  ) {
     super(message);
     this.name = "BrainstormApiError";
     this.code = code;
     this.status = status;
     this.recoverable = recoverable;
+    this.isTimeout = isTimeout;
+    this.isNetworkError = isNetworkError;
   }
 }
 
@@ -53,7 +65,9 @@ export function parseAxiosApiError(err: unknown): BrainstormApiError {
       body?.message || err.message || "Request failed",
       body?.error?.code,
       err.code,
-      body?.error?.recoverable
+      body?.error?.recoverable,
+      err.isTimeout,
+      err.isNetworkError
     );
   }
 

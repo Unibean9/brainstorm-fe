@@ -75,7 +75,17 @@ export function applyTurnStreamEvent(
   switch (event) {
     case "state": {
       const { data } = envelope as SessionStateChangedPayload;
-      ctx.setState(data.state);
+      // BE báo state đổi ngay khi sinh xong text/audio — không biết hàng đợi
+      // audio phía client (AgentAudioPlayer) đã phát xong thật hay chưa. Nếu
+      // đổi sang state khác "agent-speaking" trong lúc audio còn đang phát,
+      // đợi phát xong rồi mới đổi để animation "đang nói" không tắt sớm.
+      if (data.state !== "agent-speaking" && ctx.audio.isPlaying) {
+        void ctx.audio.whenIdle().then(() => {
+          if (!ctx.audio.isPlaying) ctx.setState(data.state);
+        });
+      } else {
+        ctx.setState(data.state);
+      }
       if (data.state !== "processing") ctx.stopFiller?.();
       break;
     }

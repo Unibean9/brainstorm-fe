@@ -79,6 +79,9 @@ export function RoomHubWebgl({
     let waveRate = 1;
     let energy = 0;
     let armedAmt = armedRef.current ? 1 : 0;
+    // Lerp riêng cho "đang nói" — vào nhanh, ra chậm hơn để lúc dừng đọc
+    // animation hạ nhiệt mượt thay vì cắt khựng theo boolean.
+    let speakAmt = 0;
 
     const resize = () => {
       const w = Math.max(host.clientWidth, 1);
@@ -207,32 +210,22 @@ export function RoomHubWebgl({
       const cy = h * orb.cy;
       const radiusFactor = orb.radiusFactor;
 
-      const pulseHz = agentSpeaking
-        ? 0.95
-        : st === "listening"
-          ? 0.7
-          : processing
-            ? 0.9
-            : 0.4;
-      const pulseAmp = agentSpeaking
-        ? 0.038 + voice * 0.016
-        : speaking
-          ? 0.02 + voice * 0.01
-          : active
-            ? 0.01 + voice * 0.005
-            : 0.006;
-      const waveSpeed = agentSpeaking
-        ? 0.32
-        : st === "listening"
-          ? 0.22
-          : processing
-            ? 0.3
-            : 0.1;
-      const waveAlpha = agentSpeaking
-        ? 0.32 + voice * 0.1
-        : active
-          ? 0.2 + voice * 0.08
-          : 0.07;
+      // speakAmt: vào nhanh (~200ms) khi bắt đầu nói, ra chậm hơn (~450ms) khi
+      // dừng — hạ nhiệt breathing/ripple mượt thay vì cắt khựng theo boolean.
+      const speakTarget = agentSpeaking ? 1 : 0;
+      speakAmt += (speakTarget - speakAmt) * Math.min(1, dt * (agentSpeaking ? 5 : 2.2));
+      // Trộn mượt giữa giá trị "không nói" (base) và "đang nói" (speak) theo speakAmt
+      // — thay cho snap cứng theo agentSpeaking, tránh khựng lúc dừng đọc.
+      const mix = (base: number, speak: number) => base + (speak - base) * speakAmt;
+
+      const baseHz = st === "listening" ? 0.7 : processing ? 0.9 : 0.4;
+      const pulseHz = baseHz + (0.95 - baseHz) * speakAmt;
+      const baseAmp = processing ? 0.02 + voice * 0.01 : active ? 0.01 + voice * 0.005 : 0.006;
+      const pulseAmp = baseAmp + (0.038 + voice * 0.016 - baseAmp) * speakAmt;
+      const baseWaveSpeed = st === "listening" ? 0.22 : processing ? 0.3 : 0.1;
+      const waveSpeed = baseWaveSpeed + (0.32 - baseWaveSpeed) * speakAmt;
+      const baseWaveAlpha = active ? 0.2 + voice * 0.08 : 0.07;
+      const waveAlpha = baseWaveAlpha + (0.32 + voice * 0.1 - baseWaveAlpha) * speakAmt;
 
       // —— Blue bg ——
       const bg = ctx.createRadialGradient(cx, cy, 8, cx, cy, Math.max(w, h) * 0.7);
@@ -317,15 +310,13 @@ export function RoomHubWebgl({
 
       // A — Breath Reply: thở mạnh khi agent nói
       const breathe = 1 + Math.sin(t * Math.PI * 2 * pulseHz) * pulseAmp;
-      const particleBreathe = reduceMotion
-        ? 1
-        : agentSpeaking
-          ? 1 + Math.sin(t * Math.PI * 2 * 1.05) * (0.2 + voice * 0.08)
-          : speaking
-            ? 1 + Math.sin(t * Math.PI * 2 * 0.85) * (0.14 + voice * 0.06)
-            : active
-              ? 1 + Math.sin(t * Math.PI * 2 * 0.55) * 0.05
-              : 1 + Math.sin(t * Math.PI * 2 * 0.35) * 0.02;
+      const baseParticleBreathe = speaking
+        ? 1 + Math.sin(t * Math.PI * 2 * 0.85) * (0.14 + voice * 0.06)
+        : active
+          ? 1 + Math.sin(t * Math.PI * 2 * 0.55) * 0.05
+          : 1 + Math.sin(t * Math.PI * 2 * 0.35) * 0.02;
+      const speakParticleBreathe = 1 + Math.sin(t * Math.PI * 2 * 1.05) * (0.2 + voice * 0.08);
+      const particleBreathe = reduceMotion ? 1 : mix(baseParticleBreathe, speakParticleBreathe);
 
       ctx.save();
       ctx.globalAlpha = armedAmt;
@@ -336,19 +327,21 @@ export function RoomHubWebgl({
         ctx.strokeStyle = `rgba(125,211,252,${0.08 - i * 0.015})`;
         ctx.lineWidth = i === 2 ? 1.1 : 0.85;
         ctx.setLineDash(i % 2 === 0 ? [3, 6] : []);
-        ctx.arc(0, 0, coreR * (1.08 + i * 0.12) * (agentSpeaking ? breathe : 1), 0, Math.PI * 2);
+        ctx.arc(0, 0, coreR * (1.08 + i * 0.12) * mix(1, breathe), 0, Math.PI * 2);
         ctx.stroke();
       }
       ctx.setLineDash([]);
 
-      // Soft ambient ripples (listening / thinking)
-      if (!reduceMotion && !agentSpeaking) {
+      // Soft ambient ripples (listening / thinking) — mờ dần khi speakAmt tăng,
+      // hiện lại mượt khi agent dừng nói thay vì bật/tắt cứng theo boolean.
+      if (!reduceMotion && speakAmt < 0.98) {
         const rippleCount = speaking ? 3 : active ? 2 : 2;
+        const rippleAlphaMul = 1 - speakAmt;
         for (let i = 0; i < rippleCount; i++) {
           const phase = (t * waveSpeed + i / rippleCount) % 1;
           const eased = 1 - Math.pow(1 - phase, 1.45);
           const rr = Math.max(1, coreR * breathe * (1.08 + eased * (speaking ? 1.2 : 0.85)));
-          const alpha = (1 - phase) * waveAlpha;
+          const alpha = (1 - phase) * waveAlpha * rippleAlphaMul;
           ctx.beginPath();
           ctx.strokeStyle = `rgba(125,211,252,${alpha})`;
           ctx.lineWidth = 1;
@@ -357,13 +350,15 @@ export function RoomHubWebgl({
         }
       }
 
-      // B — Ripple Broadcast: 3 vòng cyan + gold lan từ orb khi agent trả lời
-      if (!reduceMotion && agentSpeaking) {
+      // B — Ripple Broadcast: 3 vòng cyan + gold lan từ orb khi agent trả lời —
+      // fade theo speakAmt nên lúc dừng đọc các vòng đang lan dở tắt dần, không
+      // biến mất đột ngột.
+      if (!reduceMotion && speakAmt > 0.02) {
         for (let i = 0; i < 3; i++) {
           const phase = (t * 0.85 + i / 3) % 1;
           const eased = 1 - Math.pow(1 - phase, 1.55);
           const rr = Math.max(1, coreR * breathe * (1.12 + eased * 2.35));
-          const fade = 1 - phase;
+          const fade = (1 - phase) * speakAmt;
           ctx.beginPath();
           ctx.strokeStyle = `rgba(103,232,249,${0.34 * fade})`;
           ctx.lineWidth = 1.6 - phase * 0.7;
@@ -383,28 +378,30 @@ export function RoomHubWebgl({
       const particleR = Math.max(1, ringR - 4) * particleBreathe;
 
       {
-        const aura = ctx.createRadialGradient(0, 0, ringR * 0.5, 0, 0, ringR * (agentSpeaking ? 2.45 : 2.15));
+        const auraR = ringR * mix(2.15, 2.45);
+        const aura = ctx.createRadialGradient(0, 0, ringR * 0.5, 0, 0, auraR);
         aura.addColorStop(
           0,
-          `rgba(125,211,252,${0.38 + (agentSpeaking ? 0.2 : speaking ? 0.12 : active ? 0.08 : 0)})`
+          `rgba(125,211,252,${mix(speaking ? 0.5 : active ? 0.46 : 0.38, 0.58)})`
         );
-        aura.addColorStop(0.35, `rgba(56,189,248,${0.16 + (agentSpeaking ? 0.12 : speaking ? 0.06 : 0)})`);
+        aura.addColorStop(0.35, `rgba(56,189,248,${mix(speaking ? 0.22 : 0.16, 0.28)})`);
         aura.addColorStop(0.7, "rgba(14,165,233,0.05)");
         aura.addColorStop(1, "transparent");
         ctx.beginPath();
         ctx.fillStyle = aura;
-        ctx.arc(0, 0, ringR * (agentSpeaking ? 2.45 : 2.15), 0, Math.PI * 2);
+        ctx.arc(0, 0, auraR, 0, Math.PI * 2);
         ctx.fill();
       }
 
       {
-        const halo = ctx.createRadialGradient(0, 0, ringR * 0.85, 0, 0, ringR * (agentSpeaking ? 1.55 : 1.4));
-        halo.addColorStop(0, `rgba(251,191,36,${0.24 + (agentSpeaking ? 0.18 : speaking ? 0.1 : 0)})`);
-        halo.addColorStop(0.55, `rgba(245,158,11,${0.1 + voice * 0.04 + (agentSpeaking ? 0.08 : 0)})`);
+        const haloR = ringR * mix(1.4, 1.55);
+        const halo = ctx.createRadialGradient(0, 0, ringR * 0.85, 0, 0, haloR);
+        halo.addColorStop(0, `rgba(251,191,36,${mix(speaking ? 0.34 : 0.24, 0.42)})`);
+        halo.addColorStop(0.55, `rgba(245,158,11,${mix(0.1 + voice * 0.04, 0.18 + voice * 0.04)})`);
         halo.addColorStop(1, "transparent");
         ctx.beginPath();
         ctx.fillStyle = halo;
-        ctx.arc(0, 0, ringR * (agentSpeaking ? 1.55 : 1.4), 0, Math.PI * 2);
+        ctx.arc(0, 0, haloR, 0, Math.PI * 2);
         ctx.fill();
       }
 
@@ -414,34 +411,35 @@ export function RoomHubWebgl({
       ctx.clip();
 
       const core = ctx.createRadialGradient(0, 0, 0, 0, 0, ringR);
-      core.addColorStop(0, `rgba(240,249,255,${0.78 + (agentSpeaking ? 0.18 : speaking ? 0.12 : 0)})`);
-      core.addColorStop(0.28, `rgba(186,230,253,${0.58 + (agentSpeaking ? 0.16 : speaking ? 0.1 : 0)})`);
-      core.addColorStop(0.58, `rgba(56,189,248,${0.34 + (agentSpeaking ? 0.12 : speaking ? 0.08 : 0)})`);
+      core.addColorStop(0, `rgba(240,249,255,${mix(speaking ? 0.9 : 0.78, 0.96)})`);
+      core.addColorStop(0.28, `rgba(186,230,253,${mix(speaking ? 0.68 : 0.58, 0.74)})`);
+      core.addColorStop(0.58, `rgba(56,189,248,${mix(speaking ? 0.42 : 0.34, 0.46)})`);
       core.addColorStop(0.85, "rgba(14,116,144,0.24)");
       core.addColorStop(1, "rgba(8,47,73,0.4)");
       ctx.fillStyle = core;
       ctx.fillRect(-ringR, -ringR, ringR * 2, ringR * 2);
 
       for (const p of particles) {
+        const baseParticleSpeed = speaking ? 2.4 : 1.2;
+        const baseParticleJitter = speaking ? 0.04 : 0.015;
         const radial =
           p.r *
           particleR *
           (reduceMotion
             ? 1
             : 1 +
-              Math.sin(t * p.speed * (agentSpeaking ? 3.1 : speaking ? 2.4 : 1.2) + p.phase) *
-                (agentSpeaking ? 0.055 : speaking ? 0.04 : 0.015));
+              Math.sin(t * p.speed * mix(baseParticleSpeed, 3.1) + p.phase) *
+                mix(baseParticleJitter, 0.055));
         const x = Math.cos(p.a) * radial;
         const y = Math.sin(p.a) * radial;
         if (Math.hypot(x, y) > innerR * 0.98) continue;
         const twinkle = reduceMotion
           ? 0.72
-          : 0.5 +
-            0.5 * (0.5 + 0.5 * Math.sin(t * (agentSpeaking ? 3.4 : speaking ? 2.8 : 1.6) + p.phase));
-        const alpha = (0.3 + p.bright * 0.55) * twinkle * (agentSpeaking ? 1.15 : 1);
+          : 0.5 + 0.5 * (0.5 + 0.5 * Math.sin(t * mix(speaking ? 2.8 : 1.6, 3.4) + p.phase));
+        const alpha = (0.3 + p.bright * 0.55) * twinkle * mix(1, 1.15);
         ctx.fillStyle = `rgba(255,255,255,${Math.min(1, alpha)})`;
         ctx.beginPath();
-        ctx.arc(x, y, Math.max(0.28, p.s * (agentSpeaking ? 0.68 : speaking ? 0.58 : 0.48)), 0, Math.PI * 2);
+        ctx.arc(x, y, Math.max(0.28, p.s * mix(speaking ? 0.58 : 0.48, 0.68)), 0, Math.PI * 2);
         ctx.fill();
       }
 
@@ -449,25 +447,21 @@ export function RoomHubWebgl({
 
       ctx.beginPath();
       ctx.strokeStyle = "rgba(253,224,71,0.98)";
-      ctx.lineWidth = Math.max(7, coreR * (agentSpeaking ? 0.1 : 0.085));
-      ctx.shadowColor = agentSpeaking
-        ? `rgba(251,191,36,${0.9 + voice * 0.05})`
-        : speaking
-          ? `rgba(251,191,36,${0.85 + voice * 0.05})`
-          : "rgba(251,191,36,0.8)";
-      ctx.shadowBlur = agentSpeaking ? 18 : speaking ? 14 : 8;
+      ctx.lineWidth = Math.max(7, coreR * mix(0.085, 0.1));
+      ctx.shadowColor = `rgba(251,191,36,${mix(speaking ? 0.85 : 0.8, 0.9) + voice * 0.05})`;
+      ctx.shadowBlur = mix(speaking ? 14 : 8, 18);
       ctx.arc(0, 0, ringR, 0, Math.PI * 2);
       ctx.stroke();
 
       ctx.beginPath();
-      ctx.strokeStyle = `rgba(245,158,11,${0.35 + (agentSpeaking ? 0.2 : speaking ? 0.12 : 0)})`;
+      ctx.strokeStyle = `rgba(245,158,11,${mix(speaking ? 0.47 : 0.35, 0.55)})`;
       ctx.lineWidth = Math.max(12, coreR * 0.13);
-      ctx.shadowBlur = agentSpeaking ? 20 : speaking ? 16 : 10;
+      ctx.shadowBlur = mix(speaking ? 16 : 10, 20);
       ctx.arc(0, 0, ringR, 0, Math.PI * 2);
       ctx.stroke();
 
       ctx.beginPath();
-      ctx.strokeStyle = `rgba(254,249,195,${0.65 + (agentSpeaking ? 0.2 : speaking ? 0.12 : 0)})`;
+      ctx.strokeStyle = `rgba(254,249,195,${mix(speaking ? 0.77 : 0.65, 0.85)})`;
       ctx.lineWidth = Math.max(1.5, coreR * 0.018);
       ctx.shadowBlur = 0;
       ctx.arc(0, 0, Math.max(1, ringR - Math.max(2.5, coreR * 0.03)), 0, Math.PI * 2);

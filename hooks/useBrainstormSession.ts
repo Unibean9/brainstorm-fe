@@ -48,11 +48,13 @@ function applySnapshotToUi(
     setEngineStep: (step: number) => void;
     setState: (state: BrainstormSessionState) => void;
     setSessionPhaseKey: (phaseKey: BrainstormPhaseKey) => void;
+    setVoiceId?: (voiceId: string) => void;
   }
 ) {
   setters.setEngineStep(clampEngineStep(snapshot.engineStep));
   setters.setState(snapshot.state === "processing" ? "processing" : "idle");
   setters.setSessionPhaseKey(snapshot.phaseKey);
+  setters.setVoiceId?.(snapshot.voiceId);
 }
 
 function formatTurnError(err: unknown) {
@@ -69,6 +71,7 @@ export function useBrainstormSession({ sessionId, enabled }: UseBrainstormSessio
   const [micActive, setMicActive] = useState(false);
   const [engineStep, setEngineStep] = useState(0);
   const [sessionPhaseKey, setSessionPhaseKey] = useState<BrainstormPhaseKey>("framing");
+  const [voiceId, setVoiceId] = useState<string | null>(null);
   const [focusNodeId, setFocusNodeId] = useState<WorkflowNodeId | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
@@ -104,7 +107,7 @@ export function useBrainstormSession({ sessionId, enabled }: UseBrainstormSessio
   const resyncFromSnapshot = useCallback(async () => {
     try {
       const snapshot = await brainstormSessionApi.get(sessionId);
-      applySnapshotToUi(snapshot, { setEngineStep, setState, setSessionPhaseKey });
+      applySnapshotToUi(snapshot, { setEngineStep, setState, setSessionPhaseKey, setVoiceId });
       hydrateBrainstormSessionCache(queryClient, snapshot);
     } catch {
       /* best-effort — giữ nguyên UI hiện tại nếu resync cũng lỗi */
@@ -113,6 +116,10 @@ export function useBrainstormSession({ sessionId, enabled }: UseBrainstormSessio
 
   const runTurnStream = useCallback(
     async (body: Parameters<typeof brainstormSessionApi.postTurnStream>[1]) => {
+      // abort() chỉ ngắt kết nối SSE phía client — từ bản refactor turn-runner,
+      // turn vẫn chạy tiếp ở backend độc lập với request HTTP. Không được coi
+      // abort xong là turn đã dừng; state thật chỉ biết được qua SSE resolve
+      // hoặc resyncFromSnapshot().
       turnAbortRef.current?.abort();
       const ac = new AbortController();
       turnAbortRef.current = ac;
@@ -129,7 +136,12 @@ export function useBrainstormSession({ sessionId, enabled }: UseBrainstormSessio
           error?: { code?: string };
         };
         if (json.data?.snapshot) {
-          applySnapshotToUi(json.data.snapshot, { setEngineStep, setState, setSessionPhaseKey });
+          applySnapshotToUi(json.data.snapshot, {
+            setEngineStep,
+            setState,
+            setSessionPhaseKey,
+            setVoiceId,
+          });
           hydrateBrainstormSessionCache(queryClient, json.data.snapshot);
         }
         if (!json.isSuccess) {
@@ -196,7 +208,7 @@ export function useBrainstormSession({ sessionId, enabled }: UseBrainstormSessio
 
     try {
       const snapshot = await loadSessionMutation.mutateAsync(sessionId);
-      applySnapshotToUi(snapshot, { setEngineStep, setState, setSessionPhaseKey });
+      applySnapshotToUi(snapshot, { setEngineStep, setState, setSessionPhaseKey, setVoiceId });
       hydrateBrainstormSessionCache(queryClient, snapshot);
       setConnectionStatus("connected");
       return true;
@@ -216,6 +228,7 @@ export function useBrainstormSession({ sessionId, enabled }: UseBrainstormSessio
     setState("idle");
     setEngineStep(0);
     setSessionPhaseKey("framing");
+    setVoiceId(null);
     setFocusNodeId(null);
     setError(null);
     setWarning(null);
@@ -241,6 +254,11 @@ export function useBrainstormSession({ sessionId, enabled }: UseBrainstormSessio
     async (text: string, options?: { optimistic?: boolean }) => {
       const trimmed = text.trim();
       if (!trimmed) return;
+      // Room chỉ chạy 1 operation cùng lúc ở backend — gửi turn mới khi turn
+      // trước còn "processing" (kể cả khi client vừa abort SSE của nó) sẽ ăn
+      // 409 room_busy. UI đã disable nút gửi qua isTurnPending/chatBusy, nhưng
+      // guard lại ở đây để không phụ thuộc hoàn toàn vào việc đó.
+      if (postTurnMutation.isPending) return;
 
       const clientTurnId = newClientTurnId();
       if (options?.optimistic !== false) {
@@ -324,6 +342,7 @@ export function useBrainstormSession({ sessionId, enabled }: UseBrainstormSessio
     transcript,
     engineStep,
     sessionPhaseKey,
+    voiceId,
     focusNodeId,
     setFocusNodeId,
     error,

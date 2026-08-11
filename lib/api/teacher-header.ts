@@ -5,7 +5,7 @@ import { readStoredTeacher } from "@/lib/brainstorm/teacher-storage";
 /**
  * X-Teacher-Id là định danh (attribution), không phải xác thực (JWT Bearer) —
  * cố tình tách khỏi interceptor Authorization của apiService để không đụng
- * vào luồng auth khác trong app. Xem docs/frontend-integration-guide.md §2.
+ * vào luồng auth khác trong app. Xem docs/system-architecture.md / docs/code-standards.md.
  */
 export function withTeacherHeader(config?: AxiosRequestConfig): AxiosRequestConfig {
   const teacher = readStoredTeacher();
