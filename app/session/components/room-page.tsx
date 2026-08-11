@@ -110,6 +110,7 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
     transcript,
     engineStep: streamEngineStep,
     sessionPhaseKey,
+    voiceId,
     connectionStatus,
     error: sessionError,
     warning: sessionWarning,
@@ -123,6 +124,8 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
   const fillerThinking = useFillerThinking({
     sessionActive: sessionStarted,
     isProcessing: fillerActive && !sessionError,
+    phaseKey: sessionPhaseKey,
+    voiceId,
   });
 
   const artifacts = useBrainstormArtifacts({
