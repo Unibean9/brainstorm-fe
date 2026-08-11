@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { Mic, MessageCircle } from "lucide-react";
+import { Mic, MessageCircle, PenTool } from "lucide-react";
 
 import { useSnapListen } from "@/hooks/useSnapListen";
 import { useBrainstormSession } from "@/hooks/useBrainstormSession";
@@ -15,7 +15,6 @@ import { cn } from "@/lib/utils";
 
 import { roomsApi } from "@/lib/api/services/rooms";
 import { brainstormKeys } from "@/lib/brainstorm/brainstorm-query-keys";
-import { engineStepNodeId } from "@/lib/brainstorm/engine-steps";
 import { formatTurnErrorCode } from "@/lib/brainstorm/turn-error-copy";
 import { navigateWithTransition } from "@/lib/motion/navigate-with-transition";
 import {
@@ -35,10 +34,12 @@ import {
   spokeCurvePath,
   type WorkflowNodeId,
 } from "./room-orb-layout";
+import { RoomPhaseRail } from "./room-phase-rail";
 import { RoomSessionChat, CHAT_STAGE_COLUMN, CHAT_STAGE_GRID, CHAT_STAGE_INNER } from "./room-session-chat";
 import { RoomStandbyGate } from "./room-standby-gate";
 import { RoomVoiceStatus } from "./room-voice-status";
 import { RoomArtifactActions } from "./room-artifact-actions";
+import { RoomWhiteboard } from "./room-whiteboard";
 import { SessionStatusHud } from "./session-status-hud";
 
 const RoomHubWebgl = dynamic(
@@ -74,6 +75,7 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
   const router = useRouter();
   const [sessionStarted, setSessionStarted] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  const [whiteboardOpen, setWhiteboardOpen] = useState(false);
   const [snapFlash, setSnapFlash] = useState(false);
   const [size, setSize] = useState({ w: 1200, h: 800 });
   const rootRef = useRef<HTMLDivElement>(null);
@@ -108,8 +110,6 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
     transcript,
     engineStep: streamEngineStep,
     sessionPhaseKey,
-    focusNodeId,
-    setFocusNodeId,
     connectionStatus,
     error: sessionError,
     warning: sessionWarning,
@@ -170,7 +170,6 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
   }, [chatOpen, reduceMotion]);
 
   const engineStep = streamEngineStep;
-  const railActiveId = focusNodeId ?? engineStepNodeId(engineStep);
   const live = state === "listening" || state === "agent-speaking";
   const voiceLevel = !sessionStarted
     ? 0
@@ -187,7 +186,7 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
     const cy = h * orb.cy;
     const coreR = orbCoreRadius(w, h, orb.radiusFactor);
     const rim = coreR + 3;
-    const nodeScale = lerp(1, 0.72, dockAmt);
+    const nodeScale = lerp(1, 0.92, dockAmt);
 
     const nodes = WORKFLOW_NODES_HOME.map((n) => {
       const off = WORKFLOW_NODES_HANG_OFFSET[n.id];
@@ -261,7 +260,6 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
 
   const closeChat = useCallback(() => {
     setChatOpen(false);
-    setFocusNodeId(null);
   }, []);
 
   return (
@@ -400,7 +398,7 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
                     <motion.span
                       className={cn(
                         "relative block rounded-full",
-                        docked ? "size-6 sm:size-7" : "size-9 sm:size-10"
+                        docked ? "size-7 sm:size-8" : "size-9 sm:size-10"
                       )}
                       style={{
                         background: done
@@ -457,7 +455,7 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
                           : done
                             ? "text-amber-200/90"
                             : "text-white/55",
-                        docked ? "text-[10px] sm:text-[11px]" : "text-xs sm:text-[13px]"
+                        docked ? "text-[11px] sm:text-xs" : "text-xs sm:text-[13px]"
                       )}
                     >
                       {node.label}
@@ -470,13 +468,23 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
       </AnimatePresence>
 
       <AnimatePresence>
+        {sessionStarted ? (
+          <motion.div
+            key="phase-rail"
+            className="pointer-events-auto absolute left-4 top-52 z-30 sm:left-5 sm:top-60"
+            initial={motionOff ? false : { opacity: 0, x: -16 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ ...fade, delay: motionOff ? 0 : 0.22 }}
+          >
+            <RoomPhaseRail phaseKey={sessionPhaseKey} />
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {sessionStarted && chatOpen ? (
-          <RoomSessionChat
-            key="session-chat"
-            entries={transcript}
-            activeNodeId={railActiveId}
-            onSelectNode={setFocusNodeId}
-          />
+          <RoomSessionChat key="session-chat" entries={transcript} />
         ) : null}
       </AnimatePresence>
 
@@ -536,6 +544,7 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
                   transition={fade}
                 >
                   <div aria-hidden />
+                  <div aria-hidden />
                   <div className={CHAT_STAGE_COLUMN}>
                     <div className={CHAT_STAGE_INNER}>
                       <RoomChatBar
@@ -547,7 +556,6 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
                       />
                     </div>
                   </div>
-                  <div aria-hidden />
                 </motion.div>
               ) : (
                 <motion.div
@@ -598,10 +606,37 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
                     </motion.div>
 
                     <RoomVoiceStatus state={state} micActive={micActive} />
+
+                    <motion.div
+                      className="absolute bottom-0 right-0"
+                      initial={motionOff ? false : { opacity: 0, x: 12 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ ...fade, delay: motionOff ? 0 : 0.1 }}
+                    >
+                      <div
+                        className="flex items-center rounded-full border border-white/10 p-1 shadow-[0_8px_28px_rgba(0,0,0,0.35)]"
+                        style={{ background: "rgba(12, 18, 40, 0.92)" }}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setWhiteboardOpen(true)}
+                          className="flex items-center gap-2 rounded-full px-3.5 py-2 text-[13px] font-medium text-white transition-colors hover:bg-white/5"
+                        >
+                          <PenTool className="size-4 stroke-[1.75]" />
+                          Whiteboard
+                        </button>
+                      </div>
+                    </motion.div>
                 </motion.div>
               )}
             </AnimatePresence>
           </motion.div>
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {whiteboardOpen ? (
+          <RoomWhiteboard key="whiteboard" onClose={() => setWhiteboardOpen(false)} />
         ) : null}
       </AnimatePresence>
     </div>

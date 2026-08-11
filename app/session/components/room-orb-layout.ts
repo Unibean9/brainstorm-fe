@@ -6,10 +6,14 @@ export const ORB_CY = 0.44;
 /** Smaller than before (was ~0.205) — khớp reference hình 1 */
 export const ORB_RADIUS_FACTOR = 0.142;
 
-/** Docked when Chat open — top-right, smaller */
-export const ORB_DOCK_CX = 0.82;
-export const ORB_DOCK_CY = 0.28;
-export const ORB_DOCK_RADIUS_FACTOR = 0.088;
+/**
+ * Docked when Chat open — chat now lives in the right column (see
+ * CHAT_STAGE_GRID), so the orb only needs a small nudge left to stay visually
+ * centered in the remaining rail↔chat gap instead of the full viewport.
+ */
+export const ORB_DOCK_CX = 0.39;
+export const ORB_DOCK_CY = ORB_CY;
+export const ORB_DOCK_RADIUS_FACTOR = ORB_RADIUS_FACTOR;
 
 export function orbCoreRadius(w: number, h: number, radiusFactor = ORB_RADIUS_FACTOR) {
   return Math.max(18, Math.min(w, h) * radiusFactor);
@@ -115,14 +119,21 @@ export type WorkflowNodeId = (typeof WORKFLOW_NODES_HOME)[number]["id"];
 
 /**
  * Hang offsets from current orb center — nodes travel with the orb as one flock.
+ *
+ * Laid out as a symmetric tiered fan below the rim, in the same clockwise
+ * order they sit around the ring (observer → analyzer → diagnosis →
+ * thinking-state → technique → facilitate → trace → insight), unrolled at the
+ * observer/analyzer seam. Mirrored pairs (observer/analyzer,
+ * insight/diagnosis, trace/thinking-state, facilitate/technique) share a hang
+ * depth so spokes fan out evenly left-to-right without crossing.
  */
 export const WORKFLOW_NODES_HANG_OFFSET: Record<WorkflowNodeId, { dx: number; dy: number }> = {
-  observer: { dx: -0.11, dy: 0.14 },
-  insight: { dx: -0.16, dy: 0.24 },
-  analyzer: { dx: 0.08, dy: 0.12 },
-  diagnosis: { dx: 0.12, dy: 0.24 },
-  "thinking-state": { dx: 0.06, dy: 0.36 },
-  technique: { dx: -0.04, dy: 0.42 },
-  facilitate: { dx: -0.14, dy: 0.34 },
-  trace: { dx: -0.08, dy: 0.26 },
+  observer: { dx: -0.2, dy: 0.16 },
+  insight: { dx: -0.14, dy: 0.24 },
+  trace: { dx: -0.085, dy: 0.32 },
+  facilitate: { dx: -0.03, dy: 0.4 },
+  technique: { dx: 0.03, dy: 0.4 },
+  "thinking-state": { dx: 0.085, dy: 0.32 },
+  diagnosis: { dx: 0.14, dy: 0.24 },
+  analyzer: { dx: 0.2, dy: 0.16 },
 };
