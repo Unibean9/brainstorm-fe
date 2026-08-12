@@ -45,6 +45,8 @@ type SessionStatusHudProps = {
   roomName?: string;
   sessionName?: string;
   onSwitchRoom?: () => void;
+  /** Phiên đã wrapped — chỉ xem lại, không còn voice/chat. */
+  isWrapped?: boolean;
 };
 
 export function SessionStatusHud({
@@ -55,6 +57,7 @@ export function SessionStatusHud({
   roomName,
   sessionName,
   onSwitchRoom,
+  isWrapped = false,
 }: SessionStatusHudProps) {
   const [now, setNow] = useState(() => new Date());
   const [weather, setWeather] = useState<WeatherInfo>({
@@ -215,11 +218,32 @@ export function SessionStatusHud({
             <span className="max-w-32 truncate text-white/50">{sessionName ?? "Session"}</span>
           </span>
         )}
-        <StatusDot
-          label="VOICE"
-          on={voiceHot}
-          alert={!voiceHot && micActive === false && state === "idle"}
-        />
+        {isWrapped ? (
+          <span
+            className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-[0.12em] text-[#fde68a]/95"
+            style={{
+              borderColor: "rgba(251,191,36,0.4)",
+              background: "rgba(251,191,36,0.08)",
+              boxShadow: "0 0 8px rgba(251,191,36,0.25)",
+            }}
+          >
+            <span
+              className="size-1.5 rounded-full"
+              style={{
+                background: "#fbbf24",
+                boxShadow: "0 0 6px rgba(251,191,36,0.9), 0 0 12px rgba(251,191,36,0.45)",
+              }}
+              aria-hidden
+            />
+            ĐÃ KẾT THÚC — CHỈ XEM LẠI
+          </span>
+        ) : (
+          <StatusDot
+            label="VOICE"
+            on={voiceHot}
+            alert={!voiceHot && micActive === false && state === "idle"}
+          />
+        )}
       </div>
 
       {/* System online + thin meter */}

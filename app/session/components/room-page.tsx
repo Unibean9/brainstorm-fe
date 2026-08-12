@@ -92,7 +92,8 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
     staleTime: 5_000,
   });
   const roomName = roomsQuery.data?.find((r) => r.roomId === roomId)?.name;
-  const currentSessionName = sessionsQuery.data?.find((s) => s.sessionId === sessionId)?.name;
+  const currentSession = sessionsQuery.data?.find((s) => s.sessionId === sessionId);
+  const currentSessionName = currentSession?.name;
   const switchRoom = useCallback(() => {
     // /rooms/[roomId] không còn tồn tại — wizard ở "/" tự resume bước chọn room
     // vì teacher đã nhớ trong localStorage.
@@ -134,6 +135,11 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
     voiceState: state,
     isTurnPending,
   });
+
+  // Status thật từ BE (roomsApi.listSessions) HOẶC artifacts.isWrapped (đã ghi
+  // localStorage ngay lúc giáo viên vừa tạo PRD) — bên nào phát hiện trước
+  // dùng bên đó, tránh chờ sessionsQuery refetch mới nhận ra vừa wrap xong.
+  const isSessionWrapped = currentSession?.status === "wrapped" || artifacts.isWrapped;
 
   useEffect(() => {
     const el = rootRef.current;
@@ -228,6 +234,10 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
 
   const handleStart = useCallback(
     async (via: "click" | "snap" = "click") => {
+      // isSessionWrapped KHÔNG chặn ở đây — auto-start effect bên dưới cố ý
+      // gọi handleStart cho phiên đã wrapped để vào thẳng view xem lại. Chặn
+      // bấm Play/snap thủ công cho phiên wrapped đã làm ở nơi gọi (ẩn nút
+      // Play, tắt useSnapListen) chứ không phải ở đây.
       if (sessionStarted || connectionStatus === "connecting") return;
       const ok = await connectBrainstorm();
       if (!ok) return;
@@ -242,11 +252,20 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
   );
 
   const { status: snapStatus, level: snapLevel, retry: retrySnapMic } = useSnapListen({
-    enabled: !sessionStarted && connectionStatus !== "connecting",
+    enabled: !sessionStarted && connectionStatus !== "connecting" && !isSessionWrapped,
     onSnap: () => {
       void handleStart("snap");
     },
   });
+
+  // Phiên đã wrapped: tự vào thẳng view engine/transcript, không bắt bấm Play
+  // — chỉ còn xem lại, không tạo turn mới nên không cần gate. queueMicrotask
+  // để setState (bên trong handleStart) không nằm trực tiếp trong thân effect.
+  useEffect(() => {
+    if (isSessionWrapped && !sessionStarted && connectionStatus !== "connecting") {
+      queueMicrotask(() => void handleStart("click"));
+    }
+  }, [isSessionWrapped, sessionStarted, connectionStatus, handleStart]);
 
   const handleMic = () => {
     if (!sessionStarted) return;
@@ -318,6 +337,7 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
               roomName={roomName}
               sessionName={currentSessionName}
               onSwitchRoom={switchRoom}
+              isWrapped={isSessionWrapped}
             />
             <RoomArtifactActions
               isWrapped={artifacts.isWrapped}
@@ -492,7 +512,7 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
       </AnimatePresence>
 
       <AnimatePresence>
-        {!sessionStarted ? (
+        {!sessionStarted && !isSessionWrapped ? (
           <motion.div
             key="standby"
             className="absolute z-30 -translate-x-1/2 translate-y-[-42%]"
@@ -529,46 +549,106 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
             key="dock"
             className={cn(
               "absolute inset-x-0 bottom-0 z-40 pb-8 sm:pb-10",
-              chatOpen ? "px-0" : "px-5"
+              chatOpen && !isSessionWrapped ? "px-0" : "px-5"
             )}
             initial={motionOff ? false : { opacity: 0, y: 28 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 16 }}
             transition={{ ...fade, delay: motionOff ? 0 : 0.28 }}
           >
-            <AnimatePresence mode="wait">
-              {chatOpen ? (
+            {isSessionWrapped ? (
+              // Phiên đã wrapped: dock tĩnh, không swap qua ô nhập input —
+              // chỉ toggle xem lại lịch sử (RoomSessionChat overlay riêng,
+              // đồng bộ theo chatOpen) + Whiteboard.
+              <motion.div
+                key="wrapped-dock"
+                className="relative mx-auto flex w-full max-w-3xl items-end justify-center"
+                initial={motionOff ? false : { opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={fade}
+              >
                 <motion.div
-                  key="chat-bar"
-                  className={CHAT_STAGE_GRID}
-                  initial={motionOff ? false : { opacity: 0, y: 16 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 10 }}
-                  transition={fade}
+                  className="absolute bottom-0 left-0"
+                  initial={motionOff ? false : { opacity: 0, x: -12 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ ...fade, delay: motionOff ? 0 : 0.1 }}
                 >
-                  <div aria-hidden />
-                  <div aria-hidden />
-                  <div className={CHAT_STAGE_COLUMN}>
-                    <div className={CHAT_STAGE_INNER}>
-                      <RoomChatBar
-                        variant="session"
-                        autoFocus
-                        micDisabled={chatBusy}
-                        onSendText={handleSendText}
-                        onClose={closeChat}
-                      />
-                    </div>
+                  <div
+                    className="flex items-center rounded-full border border-white/10 p-1 shadow-[0_8px_28px_rgba(0,0,0,0.35)]"
+                    style={{ background: "rgba(12, 18, 40, 0.92)" }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setChatOpen((v) => !v)}
+                      className={cn(
+                        "flex items-center gap-2 rounded-full px-3.5 py-2 text-[13px] font-medium transition-colors",
+                        chatOpen
+                          ? "border border-white/20 bg-white/14 text-[#f5d76e]"
+                          : "text-white hover:bg-white/5"
+                      )}
+                    >
+                      <MessageCircle className="size-4 stroke-[1.75]" />
+                      {chatOpen ? "Đóng lịch sử" : "Xem lịch sử"}
+                    </button>
                   </div>
                 </motion.div>
-              ) : (
+
                 <motion.div
-                  key="voice-dock"
-                  className="relative mx-auto flex w-full max-w-3xl items-end justify-center"
-                  initial={motionOff ? false : { opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={fade}
+                  className="absolute bottom-0 right-0"
+                  initial={motionOff ? false : { opacity: 0, x: 12 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ ...fade, delay: motionOff ? 0 : 0.1 }}
                 >
+                  <div
+                    className="flex items-center rounded-full border border-white/10 p-1 shadow-[0_8px_28px_rgba(0,0,0,0.35)]"
+                    style={{ background: "rgba(12, 18, 40, 0.92)" }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setWhiteboardOpen(true)}
+                      className="flex items-center gap-2 rounded-full px-3.5 py-2 text-[13px] font-medium text-white transition-colors hover:bg-white/5"
+                    >
+                      <PenTool className="size-4 stroke-[1.75]" />
+                      Whiteboard
+                    </button>
+                  </div>
+                </motion.div>
+              </motion.div>
+            ) : (
+              <AnimatePresence mode="wait">
+                {chatOpen ? (
+                  <motion.div
+                    key="chat-bar"
+                    className={CHAT_STAGE_GRID}
+                    initial={motionOff ? false : { opacity: 0, y: 16 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 10 }}
+                    transition={fade}
+                  >
+                    <div aria-hidden />
+                    <div aria-hidden />
+                    <div className={CHAT_STAGE_COLUMN}>
+                      <div className={CHAT_STAGE_INNER}>
+                        <RoomChatBar
+                          variant="session"
+                          autoFocus
+                          micDisabled={chatBusy}
+                          onSendText={handleSendText}
+                          onClose={closeChat}
+                        />
+                      </div>
+                    </div>
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="voice-dock"
+                    className="relative mx-auto flex w-full max-w-3xl items-end justify-center"
+                    initial={motionOff ? false : { opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={fade}
+                  >
                     <motion.div
                       className="absolute bottom-0 left-0"
                       initial={motionOff ? false : { opacity: 0, x: -12 }}
@@ -630,9 +710,10 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
                         </button>
                       </div>
                     </motion.div>
-                </motion.div>
-              )}
-            </AnimatePresence>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            )}
           </motion.div>
         ) : null}
       </AnimatePresence>
