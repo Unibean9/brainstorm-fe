@@ -12,20 +12,43 @@ import {
   writeFillerEnabledPreference,
 } from "@/lib/brainstorm/filler-storage";
 import type { BrainstormFillerAsset, BrainstormPhaseKey } from "@/types/brainstorm-stream";
+import type { BrainstormLanguage } from "@/types/brainstorm-domain";
 
-/** Ưu tiên filler khớp cả voice lẫn phase, rồi khớp voice, rồi bất kỳ — tránh lẫn giọng/phase khác. */
+/** Ưu tiên filler khớp phase, voice và language; legacy metadata vẫn có fallback an toàn. */
 function pickFiller(
   fillers: BrainstormFillerAsset[],
   phaseKey: BrainstormPhaseKey | null,
-  voiceId: string | null
+  voiceId: string | null,
+  language: BrainstormLanguage | null
 ) {
   if (!fillers.length) return null;
 
-  const byVoiceAndPhase = fillers.filter(
-    (f) => (!voiceId || f.voiceId === voiceId) && (!phaseKey || f.phase === phaseKey)
+  const byVoicePhaseLanguage = fillers.filter(
+    (f) =>
+      (!voiceId || f.voiceId === voiceId) &&
+      (!phaseKey || f.phase === phaseKey) &&
+      (!language || f.lang === language)
+  );
+  const byVoicePhaseLegacy = fillers.filter(
+    (f) =>
+      (!voiceId || f.voiceId === voiceId) && (!phaseKey || f.phase === phaseKey) && f.lang == null
+  );
+  const byVoiceLanguage = fillers.filter(
+    (f) => (!voiceId || f.voiceId === voiceId) && (!language || f.lang === language)
   );
   const byVoice = fillers.filter((f) => !voiceId || f.voiceId === voiceId);
-  const pool = byVoiceAndPhase.length ? byVoiceAndPhase : byVoice.length ? byVoice : fillers;
+  const byLanguage = language ? fillers.filter((f) => f.lang === language) : [];
+  const pool = byVoicePhaseLanguage.length
+    ? byVoicePhaseLanguage
+    : byVoicePhaseLegacy.length
+      ? byVoicePhaseLegacy
+      : byVoiceLanguage.length
+        ? byVoiceLanguage
+        : byLanguage.length
+          ? byLanguage
+          : byVoice.length
+            ? byVoice
+            : fillers;
 
   return pool[Math.floor(Math.random() * pool.length)]!;
 }
@@ -37,6 +60,7 @@ type UseFillerThinkingOptions = {
   isProcessing: boolean;
   phaseKey?: BrainstormPhaseKey | null;
   voiceId?: string | null;
+  language?: BrainstormLanguage | null;
 };
 
 export function useFillerThinking({
@@ -44,6 +68,7 @@ export function useFillerThinking({
   isProcessing,
   phaseKey = null,
   voiceId = null,
+  language = null,
 }: UseFillerThinkingOptions) {
   const [enabled, setEnabledState] = useState(() => readFillerEnabledPreference());
   const playerRef = useRef<FillerThinkingPlayer | null>(null);
@@ -80,7 +105,7 @@ export function useFillerThinking({
 
     if (playedThisTurnRef.current) return;
 
-    const filler = pickFiller(catalog?.fillers ?? [], phaseKey, voiceId);
+    const filler = pickFiller(catalog?.fillers ?? [], phaseKey, voiceId, language);
     if (!filler) return;
 
     playedThisTurnRef.current = true;
@@ -90,7 +115,7 @@ export function useFillerThinking({
     return () => {
       player.stop();
     };
-  }, [shouldPlay, catalog, phaseKey, voiceId]);
+  }, [shouldPlay, catalog, phaseKey, voiceId, language]);
 
   useEffect(() => {
     return () => {

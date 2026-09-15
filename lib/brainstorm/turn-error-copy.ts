@@ -7,7 +7,7 @@ const TURN_ERROR_COPY: Record<string, string> = {
   client_disconnected: "Kết nối tới facilitator bị gián đoạn — gửi lại được ngay.",
   turn_in_progress: "Đang có một lượt chạy — chờ xong rồi gửi tiếp.",
   turn_interrupted: "Lượt trước bị đứt — gửi lại lượt mới.",
-  session_wrapped: "Phiên đã đóng sau khi tạo PRD — không nhận lượt mới.",
+  session_wrapped: "Phiên đã đóng — không nhận lượt mới.",
   invalid_turn: "Nội dung gửi không hợp lệ.",
   input_too_large: "Nội dung quá dài.",
 };

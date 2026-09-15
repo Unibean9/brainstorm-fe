@@ -17,10 +17,7 @@ import { roomsApi } from "@/lib/api/services/rooms";
 import { brainstormKeys } from "@/lib/brainstorm/brainstorm-query-keys";
 import { formatTurnErrorCode } from "@/lib/brainstorm/turn-error-copy";
 import { navigateWithTransition } from "@/lib/motion/navigate-with-transition";
-import {
-  RoomEngineRing,
-  stepStatus,
-} from "./room-engine-ring";
+import { RoomEngineRing, stepStatus } from "./room-engine-ring";
 import { RoomChatBar } from "./room-chat-bar";
 import type { HubWebglState } from "./room-hub-webgl";
 import {
@@ -32,20 +29,23 @@ import {
   orbCenter,
   orbCoreRadius,
   spokeCurvePath,
-  type WorkflowNodeId,
 } from "./room-orb-layout";
 import { RoomPhaseRail } from "./room-phase-rail";
-import { RoomSessionChat, CHAT_STAGE_COLUMN, CHAT_STAGE_GRID, CHAT_STAGE_INNER } from "./room-session-chat";
+import {
+  RoomSessionChat,
+  CHAT_STAGE_COLUMN,
+  CHAT_STAGE_GRID,
+  CHAT_STAGE_INNER,
+} from "./room-session-chat";
 import { RoomStandbyGate } from "./room-standby-gate";
 import { RoomVoiceStatus } from "./room-voice-status";
 import { RoomArtifactActions } from "./room-artifact-actions";
 import { RoomWhiteboard } from "./room-whiteboard";
 import { SessionStatusHud } from "./session-status-hud";
 
-const RoomHubWebgl = dynamic(
-  () => import("./room-hub-webgl").then((m) => m.RoomHubWebgl),
-  { ssr: false }
-);
+const RoomHubWebgl = dynamic(() => import("./room-hub-webgl").then((m) => m.RoomHubWebgl), {
+  ssr: false,
+});
 
 export type EngineCoreState = HubWebglState;
 
@@ -77,6 +77,7 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
   const [chatOpen, setChatOpen] = useState(false);
   const [whiteboardOpen, setWhiteboardOpen] = useState(false);
   const [snapFlash, setSnapFlash] = useState(false);
+  const [locallyCompleted, setLocallyCompleted] = useState(false);
   const [size, setSize] = useState({ w: 1200, h: 800 });
   const rootRef = useRef<HTMLDivElement>(null);
   const [dockAmt, setDockAmt] = useState(0);
@@ -112,9 +113,14 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
     engineStep: streamEngineStep,
     sessionPhaseKey,
     voiceId,
+    language,
     connectionStatus,
     error: sessionError,
     warning: sessionWarning,
+    snapshot: sessionSnapshot,
+    advisory,
+    advisoryWarning,
+    advisoryDiagnostic,
     fillerActive,
     isTurnPending,
     startSession: connectBrainstorm,
@@ -127,11 +133,17 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
     isProcessing: fillerActive && !sessionError,
     phaseKey: sessionPhaseKey,
     voiceId,
+    language,
   });
+
+  const sessionStatus = locallyCompleted
+    ? "wrapped"
+    : (currentSession?.status ?? sessionSnapshot?.status ?? null);
 
   const artifacts = useBrainstormArtifacts({
     sessionId,
-    sessionPhaseKey,
+    sessionStatus,
+    snapshotArtifacts: sessionSnapshot?.artifacts,
     voiceState: state,
     isTurnPending,
   });
@@ -139,7 +151,7 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
   // Status thật từ BE (roomsApi.listSessions) HOẶC artifacts.isWrapped (đã ghi
   // localStorage ngay lúc giáo viên vừa tạo PRD) — bên nào phát hiện trước
   // dùng bên đó, tránh chờ sessionsQuery refetch mới nhận ra vừa wrap xong.
-  const isSessionWrapped = currentSession?.status === "wrapped" || artifacts.isWrapped;
+  const isSessionWrapped = sessionStatus === "wrapped" || artifacts.isWrapped;
 
   useEffect(() => {
     const el = rootRef.current;
@@ -180,13 +192,7 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
 
   const engineStep = streamEngineStep;
   const live = state === "listening" || state === "agent-speaking";
-  const voiceLevel = !sessionStarted
-    ? 0
-    : live
-      ? 1
-      : state === "processing"
-        ? 0.55
-        : 0.22;
+  const voiceLevel = !sessionStarted ? 0 : live ? 1 : state === "processing" ? 0.55 : 0.22;
 
   const layout = useMemo(() => {
     const { w, h } = size;
@@ -251,7 +257,11 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
     [connectBrainstorm, connectionStatus, reduceMotion, sessionStarted]
   );
 
-  const { status: snapStatus, level: snapLevel, retry: retrySnapMic } = useSnapListen({
+  const {
+    status: snapStatus,
+    level: snapLevel,
+    retry: retrySnapMic,
+  } = useSnapListen({
     enabled: !sessionStarted && connectionStatus !== "connecting" && !isSessionWrapped,
     onSnap: () => {
       void handleStart("snap");
@@ -275,10 +285,7 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
   const motionOff = !!reduceMotion;
   const fade = motionOff ? { duration: 0 } : FADE;
   const orbHit = Math.max(72, layout.coreR * 2.2);
-  const chatBusy =
-    artifacts.isWrapped ||
-    state === "processing" ||
-    state === "agent-speaking";
+  const chatBusy = artifacts.isWrapped || state === "processing" || state === "agent-speaking";
 
   const closeChat = useCallback(() => {
     setChatOpen(false);
@@ -338,10 +345,12 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
               sessionName={currentSessionName}
               onSwitchRoom={switchRoom}
               isWrapped={isSessionWrapped}
+              advisory={advisory}
+              advisoryWarning={advisoryWarning}
+              advisoryDiagnostic={advisoryDiagnostic}
             />
             <RoomArtifactActions
               isWrapped={artifacts.isWrapped}
-              isWrapUpPhase={artifacts.isWrapUpPhase}
               canGeneratePrd={artifacts.canGeneratePrd}
               canGenerateLanding={artifacts.canGenerateLanding}
               canGeneratePitch={artifacts.canGeneratePitch}
@@ -356,13 +365,11 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
               prdError={artifacts.prdError}
               landingError={artifacts.landingError}
               pitchError={artifacts.pitchError}
+              artifactStatuses={artifacts.artifactStatuses}
               isPrdPending={artifacts.isPrdPending}
               isLandingPending={artifacts.isLandingPending}
               isPitchPending={artifacts.isPitchPending}
-              confirmForcePrd={artifacts.confirmForcePrd}
               onCreatePrd={() => void artifacts.createPrd()}
-              onConfirmForcePrd={() => void artifacts.confirmCreatePrdEarly()}
-              onCancelForcePrd={artifacts.cancelCreatePrdEarly}
               onCreateLandingPage={() => void artifacts.createLandingPage()}
               onCreatePitchDeck={() => void artifacts.createPitchDeck()}
             />
@@ -412,21 +419,14 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
                     opacity: status === "upcoming" ? 0.42 : 1,
                   }}
                 >
-                  <div
-                    className={cn(
-                      "flex flex-col items-center",
-                      docked ? "gap-1.5" : "gap-2"
-                    )}
-                  >
+                  <div className={cn("flex flex-col items-center", docked ? "gap-1.5" : "gap-2")}>
                     <motion.span
                       className={cn(
                         "relative block rounded-full",
                         docked ? "size-7 sm:size-8" : "size-9 sm:size-10"
                       )}
                       style={{
-                        background: done
-                          ? "rgba(251,191,36,0.18)"
-                          : "rgba(5,11,24,0.55)",
+                        background: done ? "rgba(251,191,36,0.18)" : "rgba(5,11,24,0.55)",
                         border: `${active ? 2 : 1.5}px solid ${tone.ring}`,
                         boxShadow: active
                           ? `0 0 14px ${tone.glow}, 0 0 32px ${tone.soft}`
@@ -473,11 +473,7 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
                     <span
                       className={cn(
                         "relative z-10 whitespace-nowrap font-medium tracking-wide",
-                        active
-                          ? "text-white"
-                          : done
-                            ? "text-amber-200/90"
-                            : "text-white/55",
+                        active ? "text-white" : done ? "text-amber-200/90" : "text-white/55",
                         docked ? "text-[11px] sm:text-xs" : "text-xs sm:text-[13px]"
                       )}
                     >
@@ -494,7 +490,7 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
         {sessionStarted ? (
           <motion.div
             key="phase-rail"
-            className="pointer-events-auto absolute left-4 top-52 z-30 sm:left-5 sm:top-60"
+            className="pointer-events-auto absolute left-4 top-72 z-30 sm:left-5 sm:top-64 lg:top-60"
             initial={motionOff ? false : { opacity: 0, x: -16 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0 }}

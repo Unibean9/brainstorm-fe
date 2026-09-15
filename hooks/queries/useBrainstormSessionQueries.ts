@@ -41,8 +41,7 @@ export function useLoadBrainstormSessionMutation() {
 
 export function useCreateBrainstormPrdMutation() {
   return useMutation({
-    mutationFn: ({ sessionId, force = false }: { sessionId: string; force?: boolean }) =>
-      brainstormSessionApi.createPrd(sessionId, force),
+    mutationFn: ({ sessionId }: { sessionId: string }) => brainstormSessionApi.createPrd(sessionId),
   });
 }
 

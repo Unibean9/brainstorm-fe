@@ -28,7 +28,7 @@ type RoomChatBarProps = {
   micActive?: boolean;
   micDisabled?: boolean;
   onMicToggle?: () => void;
-  onSendText: (text: string) => void;
+  onSendText: (text: string) => void | Promise<void>;
   onClose: () => void;
   variant?: "session" | "workspace";
   placeholder?: string;
@@ -127,8 +127,12 @@ export function RoomChatBar({
   const handleSend = () => {
     const trimmed = value.trim();
     if (!trimmed || micDisabled || dictationActive) return;
-    onSendText(trimmed);
     setValue("");
+    // Lỗi async đã được parent đưa vào HUD; bắt promise ở đây để không tạo
+    // unhandled rejection/Runtime Error khi fetch SSE mất kết nối.
+    void Promise.resolve()
+      .then(() => onSendText(trimmed))
+      .catch(() => undefined);
   };
 
   const canSend = value.trim().length > 0 && !micDisabled && !dictationActive;
@@ -261,7 +265,10 @@ export function RoomChatBar({
             onClick={onMicToggle}
             disabled={micDisabled || !onMicToggle}
             aria-label="Chuyển sang voice"
-            className={cn(actionBtn, "bg-white/10 text-white/75 hover:bg-white/14 hover:text-white disabled:pointer-events-none disabled:opacity-40")}
+            className={cn(
+              actionBtn,
+              "bg-white/10 text-white/75 hover:bg-white/14 hover:text-white disabled:pointer-events-none disabled:opacity-40"
+            )}
           >
             <Mic className="size-4.5 stroke-[1.75]" />
           </button>

@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { FolderOpen } from "lucide-react";
 
 import type { HubWebglState } from "./room-hub-webgl";
 import { Checkbox } from "@/components/ui/checkbox";
+import type { ReasoningState } from "@/types/brainstorm-stream";
 
 type WeatherInfo = {
   tempC: number | null;
@@ -47,6 +48,10 @@ type SessionStatusHudProps = {
   onSwitchRoom?: () => void;
   /** Phiên đã wrapped — chỉ xem lại, không còn voice/chat. */
   isWrapped?: boolean;
+  sessionTools?: ReactNode;
+  advisory?: ReasoningState | null;
+  advisoryWarning?: string | null;
+  advisoryDiagnostic?: string | null;
 };
 
 export function SessionStatusHud({
@@ -58,6 +63,10 @@ export function SessionStatusHud({
   sessionName,
   onSwitchRoom,
   isWrapped = false,
+  sessionTools,
+  advisory,
+  advisoryWarning,
+  advisoryDiagnostic,
 }: SessionStatusHudProps) {
   const [now, setNow] = useState(() => new Date());
   const [weather, setWeather] = useState<WeatherInfo>({
@@ -204,7 +213,10 @@ export function SessionStatusHud({
             title="Đổi phòng"
             className="pointer-events-auto group inline-flex max-w-full items-center gap-1.5 rounded-full border border-white/12 bg-white/3 px-2.5 py-1 text-[11px] font-medium text-white/80 transition-colors hover:border-[#67e8f9]/45 hover:text-[#a5f3fc]"
           >
-            <FolderOpen className="size-3 shrink-0 text-white/45 group-hover:text-[#67e8f9]" aria-hidden />
+            <FolderOpen
+              className="size-3 shrink-0 text-white/45 group-hover:text-[#67e8f9]"
+              aria-hidden
+            />
             <span className="max-w-32 truncate">{roomName ?? "Room"}</span>
             <span className="text-white/25">/</span>
             <span className="max-w-32 truncate text-white/55 group-hover:text-[#a5f3fc]">
@@ -270,6 +282,20 @@ export function SessionStatusHud({
         </div>
       </div>
 
+      {advisory || advisoryWarning ? (
+        <p
+          className="mt-2 max-w-[26rem] truncate text-[10px] leading-relaxed text-white/42"
+          title={advisoryWarning ?? advisoryDiagnostic ?? advisory?.diagnosis}
+        >
+          <span className="font-semibold tracking-[0.12em] text-[#67e8f9]/70">ADVISORY</span>
+          <span className="mx-1.5 text-white/20">·</span>
+          {advisoryWarning
+            ? "Private state chưa sẵn sàng — turn vẫn tiếp tục"
+            : [advisory?.stage, advisory?.technique, advisory?.move].filter(Boolean).join(" · ") ||
+              "Đang cập nhật"}
+        </p>
+      ) : null}
+
       {onFillerEnabledChange ? (
         <label className="pointer-events-auto mt-3 flex cursor-pointer items-center gap-2.5 text-[10px] font-medium tracking-[0.12em] text-white/70">
           <Checkbox
@@ -280,19 +306,13 @@ export function SessionStatusHud({
           THINKING SOUND
         </label>
       ) : null}
+
+      {sessionTools ? <div className="mt-3">{sessionTools}</div> : null}
     </aside>
   );
 }
 
-function StatusDot({
-  label,
-  on,
-  alert,
-}: {
-  label: string;
-  on?: boolean;
-  alert?: boolean;
-}) {
+function StatusDot({ label, on, alert }: { label: string; on?: boolean; alert?: boolean }) {
   return (
     <span className="inline-flex items-center gap-1.5">
       <span

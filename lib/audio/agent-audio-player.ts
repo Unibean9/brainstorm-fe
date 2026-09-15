@@ -87,8 +87,10 @@ export class AgentAudioPlayer {
     return this.unlockPromise;
   }
 
-  enqueue(chunk: AudioChunkInput) {
-    this.queue = this.queue.then(() => this.playChunk(chunk)).catch(() => undefined);
+  enqueue(chunk: AudioChunkInput, onPlaybackStart?: () => void) {
+    this.queue = this.queue
+      .then(() => this.playChunk(chunk, onPlaybackStart))
+      .catch(() => undefined);
     return this.queue;
   }
 
@@ -107,7 +109,7 @@ export class AgentAudioPlayer {
     return this.playChunk(chunk);
   }
 
-  private playChunk(chunk: AudioChunkInput): Promise<void> {
+  private playChunk(chunk: AudioChunkInput, onPlaybackStart?: () => void): Promise<void> {
     const bytes = decodeBase64(chunk.chunkBase64);
     const mime = mimeFor(chunk.encoding, chunk.sampleRate);
     const blob = new Blob([new Uint8Array(bytes)], { type: mime });
@@ -136,10 +138,15 @@ export class AgentAudioPlayer {
         this.playing = false;
         resolve();
       };
-      void audio.play().catch(() => {
-        this.playing = false;
-        resolve();
-      });
+      void audio.play().then(
+        () => {
+          if (this.current === audio && this.playing) onPlaybackStart?.();
+        },
+        () => {
+          this.playing = false;
+          resolve();
+        }
+      );
     });
   }
 }

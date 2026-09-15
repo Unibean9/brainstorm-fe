@@ -14,6 +14,8 @@ import { Label } from "@/components/ui/label";
 import { teachersApi } from "@/lib/api/services/teachers";
 import { roomsApi } from "@/lib/api/services/rooms";
 import { voicesApi } from "@/lib/api/services/voices";
+import { runtimeProvidersApi } from "@/lib/api/services/runtimeProviders";
+import { languagesApi } from "@/lib/api/services/languages";
 import { brainstormKeys } from "@/lib/brainstorm/brainstorm-query-keys";
 import {
   clearStoredTeacher,
@@ -25,7 +27,13 @@ import { parseAxiosApiError } from "@/lib/brainstorm/parse-api-error";
 import { navigateWithTransition } from "@/lib/motion/navigate-with-transition";
 import { formatRelativeTime } from "@/lib/utils/formatDate";
 import { cn } from "@/lib/utils";
-import type { Room, RoomSessionSummary, TeacherDirectoryEntry } from "@/types/brainstorm-domain";
+import type {
+  RuntimeProvider,
+  BrainstormLanguage,
+  Room,
+  RoomSessionSummary,
+  TeacherDirectoryEntry,
+} from "@/types/brainstorm-domain";
 
 type WizardStep = 1 | 2 | 3;
 
@@ -47,8 +55,20 @@ const FIELD_ERROR_COPY: Record<string, string> = {
   invalid_teacher: "Có trường dữ liệu không hợp lệ.",
   invalid_room: "Dữ liệu room không hợp lệ.",
   room_not_found: "Room này không còn tồn tại.",
-  facilitator_start_failed: "Facilitator chưa khởi động được — thử tạo lại.",
+  facilitator_start_failed:
+    "Runtime provider của room chưa khởi động được. Provider được ghim ở room — không tự chuyển provider; hãy thử lại hoặc kiểm tra CLI/auth.",
+  invalid_brief: "Brief chưa đúng định dạng — kiểm tra lại các trường đã nhập.",
 };
+
+const FALLBACK_RUNTIME_PROVIDERS: { providerId: RuntimeProvider; label: string }[] = [
+  { providerId: "claude", label: "Claude" },
+  { providerId: "codex", label: "Codex" },
+];
+
+const FALLBACK_LANGUAGES: { languageId: BrainstormLanguage; label: string }[] = [
+  { languageId: "vi", label: "Tiếng Việt" },
+  { languageId: "en", label: "English" },
+];
 
 function StepNode({
   id,
@@ -65,7 +85,8 @@ function StepNode({
 }) {
   const reduceMotion = useReducedMotion();
   const clickable = status === "done" && Boolean(onClick);
-  const tone = status === "done" ? "#fbbf24" : status === "active" ? "#67e8f9" : "rgba(255,255,255,0.18)";
+  const tone =
+    status === "done" ? "#fbbf24" : status === "active" ? "#67e8f9" : "rgba(255,255,255,0.18)";
   const glow =
     status === "done"
       ? "0 0 14px rgba(251,191,36,0.55), 0 0 30px rgba(245,158,11,0.3)"
@@ -105,7 +126,11 @@ function StepNode({
               }
             : undefined
         }
-        transition={status === "active" && !reduceMotion ? { duration: 2.6, repeat: Infinity, ease: "easeInOut" } : undefined}
+        transition={
+          status === "active" && !reduceMotion
+            ? { duration: 2.6, repeat: Infinity, ease: "easeInOut" }
+            : undefined
+        }
         whileHover={clickable && !reduceMotion ? { scale: 1.08 } : undefined}
       >
         {status === "done" ? (
@@ -187,7 +212,15 @@ function ListRow({
   );
 }
 
-function StepShell({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
+function StepShell({
+  title,
+  hint,
+  children,
+}: {
+  title: string;
+  hint?: string;
+  children: ReactNode;
+}) {
   return (
     <div className="flex flex-col gap-4">
       <div>
@@ -199,7 +232,15 @@ function StepShell({ title, hint, children }: { title: string; hint?: string; ch
   );
 }
 
-function ComposerToggle({ open, onOpen, label }: { open: boolean; onOpen: () => void; label: string }) {
+function ComposerToggle({
+  open,
+  onOpen,
+  label,
+}: {
+  open: boolean;
+  onOpen: () => void;
+  label: string;
+}) {
   if (open) return null;
   return (
     <button
@@ -233,8 +274,10 @@ export function OnboardingWizard() {
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
   const [roomName, setRoomName] = useState("");
-  const [sessionName, setSessionName] = useState("");
+  const [sessionTopic, setSessionTopic] = useState("");
   const [selectedVoiceId, setSelectedVoiceId] = useState<string | null>(null);
+  const [selectedRuntimeProvider, setSelectedRuntimeProvider] = useState<RuntimeProvider>("claude");
+  const [selectedLanguage, setSelectedLanguage] = useState<BrainstormLanguage>("vi");
   const [stepError, setStepError] = useState<string | null>(null);
   const [pendingCode, setPendingCode] = useState<string | null>(null);
 
@@ -262,6 +305,13 @@ export function OnboardingWizard() {
     staleTime: 15_000,
   });
 
+  const runtimeProvidersQuery = useQuery({
+    queryKey: brainstormKeys.runtimeProviders(),
+    queryFn: runtimeProvidersApi.list,
+    enabled: step === 2,
+    staleTime: Infinity,
+  });
+
   const sessionsQuery = useQuery({
     queryKey: brainstormKeys.roomSessions(selectedRoom?.roomId ?? "pending"),
     queryFn: () => roomsApi.listSessions(selectedRoom!.roomId),
@@ -276,14 +326,29 @@ export function OnboardingWizard() {
     staleTime: Infinity,
   });
 
+  const languagesQuery = useQuery({
+    queryKey: brainstormKeys.languages(),
+    queryFn: languagesApi.list,
+    enabled: step === 3,
+    staleTime: Infinity,
+  });
+
   // selectedVoiceId chưa từng set thủ công (null) → mặc định về preset đầu tiên,
   // tính lại ngay trong render thay vì setState trong effect (tránh cascading render).
   const effectiveVoiceId = selectedVoiceId ?? voicesQuery.data?.[0]?.voiceId ?? null;
+  const runtimeProviderOptions = runtimeProvidersQuery.data?.length
+    ? runtimeProvidersQuery.data
+    : FALLBACK_RUNTIME_PROVIDERS;
+  const languageOptions = languagesQuery.data?.length ? languagesQuery.data : FALLBACK_LANGUAGES;
 
   const registerTeacherMutation = useMutation({
     mutationFn: teachersApi.register,
     onSuccess: (result) => {
-      const stored: StoredTeacher = { teacherId: result.teacherId, code: result.code, name: result.name };
+      const stored: StoredTeacher = {
+        teacherId: result.teacherId,
+        code: result.code,
+        name: result.name,
+      };
       writeStoredTeacher(stored);
       setTeacherComposerOpen(false);
       setStepError(null);
@@ -316,10 +381,17 @@ export function OnboardingWizard() {
   });
 
   const createSessionMutation = useMutation({
-    mutationFn: ({ name, voiceId }: { name: string; voiceId: string }) =>
-      roomsApi.createSession(selectedRoom!.roomId, { name, voiceId }),
+    mutationFn: (body: {
+      topic: string;
+      voiceId: string;
+      language: BrainstormLanguage;
+      capabilities: { research: boolean };
+    }) => roomsApi.createSession(selectedRoom!.roomId, body),
     onSuccess: (snapshot) => {
-      navigateWithTransition(router, `/rooms/${selectedRoom!.roomId}/sessions/${snapshot.sessionId}`);
+      navigateWithTransition(
+        router,
+        `/rooms/${selectedRoom!.roomId}/sessions/${snapshot.sessionId}`
+      );
     },
     onError: (err) => {
       const apiErr = parseAxiosApiError(err);
@@ -354,12 +426,12 @@ export function OnboardingWizard() {
       return;
     }
     setStepError(null);
-    createRoomMutation.mutate({ name: trimmed });
+    createRoomMutation.mutate({ name: trimmed, runtimeProvider: selectedRuntimeProvider });
   };
 
   const submitNewSession = (e: FormEvent) => {
     e.preventDefault();
-    const trimmed = sessionName.trim();
+    const trimmed = sessionTopic.trim();
     if (!trimmed) {
       setStepError("Đặt tên session trước đã.");
       return;
@@ -369,7 +441,14 @@ export function OnboardingWizard() {
       return;
     }
     setStepError(null);
-    createSessionMutation.mutate({ name: trimmed, voiceId: effectiveVoiceId });
+    createSessionMutation.mutate({
+      topic: trimmed,
+      voiceId: effectiveVoiceId,
+      language: selectedLanguage,
+      // Keep the existing research capability default without adding another decision to the
+      // minimum start flow. It is a capability flag, not part of the session seed/brief.
+      capabilities: { research: true },
+    });
   };
 
   const goToStep = (target: WizardStep) => {
@@ -402,24 +481,33 @@ export function OnboardingWizard() {
           </p>
         </div>
 
-        <ConstellationGrid className="mb-10 flex w-full max-w-md items-start justify-between">
+        <ConstellationGrid className="mb-10 flex w-full max-w-2xl items-start justify-between">
           {STEP_META.map((s) => (
             <StepNode
               key={s.id}
               id={s.id}
               label={s.label}
-              resolvedLabel={s.id === 1 ? teacher?.name : s.id === 2 ? selectedRoom?.name : undefined}
+              resolvedLabel={
+                s.id === 1 ? teacher?.name : s.id === 2 ? selectedRoom?.name : undefined
+              }
               status={s.id < step ? "done" : s.id === step ? "active" : "upcoming"}
               onClick={s.id < step ? () => goToStep(s.id) : undefined}
             />
           ))}
         </ConstellationGrid>
 
-        <div className="w-full max-w-md">
+        <div className="w-full max-w-2xl">
           <EngineCard tone={step === 3 ? "gold" : "cyan"} className="w-full overflow-hidden p-6!">
             <AnimatePresence mode="wait" initial={false}>
               {step === 1 ? (
-                <motion.div key="step-1" variants={slideVariants} initial="initial" animate="animate" exit="exit" transition={{ duration: reduceMotion ? 0 : 0.22 }}>
+                <motion.div
+                  key="step-1"
+                  variants={slideVariants}
+                  initial="initial"
+                  animate="animate"
+                  exit="exit"
+                  transition={{ duration: reduceMotion ? 0 : 0.22 }}
+                >
                   <StepShell
                     title="Ai đang thao tác trên máy này?"
                     hint="Chọn tên bạn trong danh sách, hoặc nhập mã mới nếu đây là lần đầu."
@@ -447,9 +535,15 @@ export function OnboardingWizard() {
                     />
 
                     {teacherComposerOpen ? (
-                      <form onSubmit={submitNewTeacher} className="flex flex-col gap-3.5 border-t border-white/8 pt-4">
+                      <form
+                        onSubmit={submitNewTeacher}
+                        className="flex flex-col gap-3.5 border-t border-white/8 pt-4"
+                      >
                         <div className="flex flex-col gap-1.5">
-                          <Label htmlFor="wiz-code" className="text-[11px] font-semibold tracking-[0.08em] text-white/45">
+                          <Label
+                            htmlFor="wiz-code"
+                            className="text-[11px] font-semibold tracking-[0.08em] text-white/45"
+                          >
                             MÃ GIÁO VIÊN
                           </Label>
                           <Input
@@ -463,7 +557,10 @@ export function OnboardingWizard() {
                           />
                         </div>
                         <div className="flex flex-col gap-1.5">
-                          <Label htmlFor="wiz-name" className="text-[11px] font-semibold tracking-[0.08em] text-white/45">
+                          <Label
+                            htmlFor="wiz-name"
+                            className="text-[11px] font-semibold tracking-[0.08em] text-white/45"
+                          >
                             TÊN HIỂN THỊ
                           </Label>
                           <Input
@@ -485,8 +582,18 @@ export function OnboardingWizard() {
                   </StepShell>
                 </motion.div>
               ) : step === 2 ? (
-                <motion.div key="step-2" variants={slideVariants} initial="initial" animate="animate" exit="exit" transition={{ duration: reduceMotion ? 0 : 0.22 }}>
-                  <StepShell title="Chọn room" hint="Toàn bộ room trên máy này, hoặc ghim room mới cho lớp của bạn.">
+                <motion.div
+                  key="step-2"
+                  variants={slideVariants}
+                  initial="initial"
+                  animate="animate"
+                  exit="exit"
+                  transition={{ duration: reduceMotion ? 0 : 0.22 }}
+                >
+                  <StepShell
+                    title="Chọn room"
+                    hint="Toàn bộ room trên máy này, hoặc ghim room mới cho lớp của bạn."
+                  >
                     {roomsQuery.isPending ? (
                       <ListSkeleton />
                     ) : roomsQuery.data && roomsQuery.data.length > 0 ? (
@@ -495,22 +602,39 @@ export function OnboardingWizard() {
                           <ListRow
                             key={room.roomId}
                             title={room.name}
-                            meta={`${room.ownerName ?? "—"} · ${formatRelativeTime(room.createdAt)}`}
+                            meta={`${room.ownerName ?? "—"} · ${formatRelativeTime(room.createdAt)} · Provider: ${room.runtimeProvider ?? room.agent ?? "claude"}`}
+                            badge={
+                              <span className="shrink-0 rounded-full border border-[#67e8f9]/20 px-2 py-0.5 text-[10px] font-semibold text-[#a5f3fc]/75">
+                                {(room.runtimeProvider ?? room.agent ?? "claude").toUpperCase()}
+                              </span>
+                            }
                             onClick={() => {
                               setSelectedRoom(room);
+                              setSelectedRuntimeProvider(
+                                room.runtimeProvider ?? room.agent ?? "claude"
+                              );
                               setManualStep(3);
                             }}
                           />
                         ))}
                       </div>
                     ) : (
-                      <p className="text-sm text-white/40">Chưa có room nào — ghim room đầu tiên.</p>
+                      <p className="text-sm text-white/40">
+                        Chưa có room nào — ghim room đầu tiên.
+                      </p>
                     )}
 
-                    <ComposerToggle open={roomComposerOpen} onOpen={() => setRoomComposerOpen(true)} label="Room mới" />
+                    <ComposerToggle
+                      open={roomComposerOpen}
+                      onOpen={() => setRoomComposerOpen(true)}
+                      label="Room mới"
+                    />
 
                     {roomComposerOpen ? (
-                      <form onSubmit={submitNewRoom} className="flex flex-col gap-3.5 border-t border-white/8 pt-4">
+                      <form
+                        onSubmit={submitNewRoom}
+                        className="flex flex-col gap-3.5 border-t border-white/8 pt-4"
+                      >
                         <Input
                           ref={roomInputRef}
                           value={roomName}
@@ -519,6 +643,32 @@ export function OnboardingWizard() {
                           maxLength={200}
                           className={engineInputClass}
                         />
+                        <div className="flex flex-col gap-1.5">
+                          <Label
+                            htmlFor="wiz-runtime-provider"
+                            className="text-[11px] font-semibold tracking-[0.08em] text-white/45"
+                          >
+                            RUNTIME PROVIDER CHO PHÒNG
+                          </Label>
+                          <select
+                            id="wiz-runtime-provider"
+                            value={selectedRuntimeProvider}
+                            onChange={(e) =>
+                              setSelectedRuntimeProvider(e.target.value as RuntimeProvider)
+                            }
+                            className="h-10 rounded-lg border border-white/12 bg-[#07111f] px-3 text-sm font-medium text-[#e0f2fe] outline-none transition-colors focus-visible:border-[#67e8f9] focus-visible:ring-2 focus-visible:ring-[#67e8f9]/30"
+                          >
+                            {runtimeProviderOptions.map((provider) => (
+                              <option key={provider.providerId} value={provider.providerId}>
+                                {provider.label}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="text-[11px] leading-snug text-white/38">
+                            Provider này được ghim cho conversation chính của room; không
+                            silent-switch giữa phiên.
+                          </p>
+                        </div>
                         <WizardSubmitRow
                           pending={createRoomMutation.isPending}
                           label="Ghim room"
@@ -529,7 +679,14 @@ export function OnboardingWizard() {
                   </StepShell>
                 </motion.div>
               ) : (
-                <motion.div key="step-3" variants={slideVariants} initial="initial" animate="animate" exit="exit" transition={{ duration: reduceMotion ? 0 : 0.22 }}>
+                <motion.div
+                  key="step-3"
+                  variants={slideVariants}
+                  initial="initial"
+                  animate="animate"
+                  exit="exit"
+                  transition={{ duration: reduceMotion ? 0 : 0.22 }}
+                >
                   <StepShell
                     title="Chọn session"
                     hint={selectedRoom ? `Trong room "${selectedRoom.name}".` : undefined}
@@ -543,7 +700,7 @@ export function OnboardingWizard() {
                             key={session.sessionId}
                             tone="gold"
                             title={session.name}
-                            meta={session.phaseKey}
+                            meta={`${session.phaseKey} · Provider: ${session.runtimeProvider ?? "claude"} · Brief: ${session.briefStatus === "confirmed" ? "đã xác nhận" : "đang khám phá"}`}
                             badge={
                               <span
                                 className={
@@ -565,7 +722,9 @@ export function OnboardingWizard() {
                         ))}
                       </div>
                     ) : (
-                      <p className="text-sm text-white/40">Chưa có session — bắt đầu session đầu tiên.</p>
+                      <p className="text-sm text-white/40">
+                        Chưa có session — bắt đầu session đầu tiên.
+                      </p>
                     )}
 
                     <ComposerToggle
@@ -575,14 +734,31 @@ export function OnboardingWizard() {
                     />
 
                     {sessionComposerOpen ? (
-                      <form onSubmit={submitNewSession} className="flex flex-col gap-3.5 border-t border-white/8 pt-4">
-                        <Input
-                          ref={sessionInputRef}
-                          value={sessionName}
-                          onChange={(e) => setSessionName(e.target.value)}
-                          placeholder="Tên session, vd. Brainstorm sáng thứ 2"
-                          className={engineInputClass}
-                        />
+                      <form
+                        onSubmit={submitNewSession}
+                        className="flex flex-col gap-3.5 border-t border-white/8 pt-4"
+                      >
+                        <div className="flex flex-col gap-1.5">
+                          <Label
+                            htmlFor="wiz-topic"
+                            className="text-[11px] font-semibold tracking-[0.08em] text-white/45"
+                          >
+                            CHỦ ĐỀ BRAINSTORM
+                          </Label>
+                          <Input
+                            ref={sessionInputRef}
+                            id="wiz-topic"
+                            value={sessionTopic}
+                            onChange={(e) => setSessionTopic(e.target.value)}
+                            placeholder="vd. Làm sao giúp học sinh đọc nhiều hơn?"
+                            maxLength={200}
+                            className={engineInputClass}
+                          />
+                          <p className="text-[11px] leading-relaxed text-white/42">
+                            Chỉ cần nói chủ đề. Trong các lượt đầu, agent sẽ cùng bạn làm rõ mục
+                            tiêu, bối cảnh, ràng buộc, đối tượng và tiêu chí thành công.
+                          </p>
+                        </div>
                         <div className="flex flex-col gap-1.5">
                           <Label className="text-[11px] font-semibold tracking-[0.08em] text-white/45">
                             GIỌNG ĐỌC
@@ -603,6 +779,41 @@ export function OnboardingWizard() {
                                 {voice.label}
                               </button>
                             ))}
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="flex flex-col gap-1.5">
+                            <Label
+                              htmlFor="wiz-language"
+                              className="text-[11px] font-semibold tracking-[0.08em] text-white/45"
+                            >
+                              NGÔN NGỮ
+                            </Label>
+                            <select
+                              id="wiz-language"
+                              value={selectedLanguage}
+                              onChange={(e) =>
+                                setSelectedLanguage(e.target.value as BrainstormLanguage)
+                              }
+                              className="h-10 rounded-lg border border-white/12 bg-[#07111f] px-3 text-sm font-medium text-[#e0f2fe] outline-none transition-colors focus-visible:border-[#fbbf24] focus-visible:ring-2 focus-visible:ring-[#fbbf24]/30"
+                            >
+                              {languageOptions.map((language) => (
+                                <option key={language.languageId} value={language.languageId}>
+                                  {language.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="flex flex-col justify-end gap-1.5 rounded-lg border border-white/10 bg-white/[0.025] px-3 py-2">
+                            <span className="text-[10px] font-semibold tracking-[0.08em] text-white/40">
+                              CONVERSATION CHÍNH
+                            </span>
+                            <span className="text-sm font-semibold text-[#a5f3fc]">
+                              {selectedRoom?.runtimeProvider ?? selectedRoom?.agent ?? "claude"}
+                            </span>
+                            <span className="text-[10px] leading-snug text-white/35">
+                              Provider được ghim ở room
+                            </span>
                           </div>
                         </div>
                         <WizardSubmitRow
@@ -666,7 +877,11 @@ function WizardSubmitRow({
         {pending ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : null}
         {label}
       </button>
-      <button type="button" onClick={onCancel} className="text-xs font-medium text-white/40 hover:text-white/70">
+      <button
+        type="button"
+        onClick={onCancel}
+        className="text-xs font-medium text-white/40 hover:text-white/70"
+      >
         Huỷ
       </button>
     </div>
@@ -678,7 +893,10 @@ function ListSkeleton() {
     <div className="flex flex-col gap-2">
       {[0, 1].map((i) => (
         <div key={i} className="flex items-center gap-3.5 px-2.5 py-2.5">
-          <div className="size-9 animate-pulse rounded-full bg-white/8" style={{ animationDelay: `${i * 120}ms` }} />
+          <div
+            className="size-9 animate-pulse rounded-full bg-white/8"
+            style={{ animationDelay: `${i * 120}ms` }}
+          />
           <div className="h-4 flex-1 animate-pulse rounded bg-white/8" />
         </div>
       ))}

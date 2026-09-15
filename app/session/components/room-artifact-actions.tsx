@@ -2,17 +2,17 @@
 
 import { useMemo } from "react";
 import { Loader2 } from "lucide-react";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 
 import { cn } from "@/lib/utils";
 import { downloadArtifactFromUrl } from "@/lib/brainstorm/download-artifact";
+import type { ArtifactKey, BrainstormArtifactStatus } from "@/types/brainstorm-domain";
 
 const CYAN_GLOW =
   "0 0 8px rgba(34,211,238,0.55), 0 0 22px rgba(34,211,238,0.35), 0 0 40px rgba(56,189,248,0.2)";
 
 type RoomArtifactActionsProps = {
   isWrapped: boolean;
-  isWrapUpPhase: boolean;
   canGeneratePrd: boolean;
   canGenerateLanding: boolean;
   canGeneratePitch: boolean;
@@ -27,13 +27,11 @@ type RoomArtifactActionsProps = {
   prdError?: string | null;
   landingError?: string | null;
   pitchError?: string | null;
+  artifactStatuses?: BrainstormArtifactStatus[];
   isPrdPending?: boolean;
   isLandingPending?: boolean;
   isPitchPending?: boolean;
-  confirmForcePrd: boolean;
   onCreatePrd: () => void;
-  onConfirmForcePrd: () => void;
-  onCancelForcePrd: () => void;
   onCreateLandingPage: () => void;
   onCreatePitchDeck: () => void;
 };
@@ -102,11 +100,13 @@ function Col({
   code,
   hot,
   warnings,
+  status,
   children,
 }: {
   code: string;
   hot?: boolean;
   warnings?: string[];
+  status?: BrainstormArtifactStatus["status"];
   children: React.ReactNode;
 }) {
   return (
@@ -131,13 +131,30 @@ function Col({
         ) : null}
       </p>
       {children}
+      {status ? (
+        <span
+          className={cn(
+            "text-[9px] font-medium tracking-[0.08em]",
+            status === "ready"
+              ? "text-[#a7f3d0]/80"
+              : status === "failed"
+                ? "text-[#fdba74]/90"
+                : "text-[#a5f3fc]/80"
+          )}
+        >
+          {status === "ready" ? "SẴN SÀNG" : status === "failed" ? "THỬ LẠI" : "ĐANG TẠO"}
+        </span>
+      ) : null}
     </div>
   );
 }
 
+function getStatus(statuses: BrainstormArtifactStatus[] | undefined, key: ArtifactKey) {
+  return statuses?.find((item) => item.artifactKey === key);
+}
+
 export function RoomArtifactActions({
   isWrapped,
-  isWrapUpPhase,
   canGeneratePrd,
   canGenerateLanding,
   canGeneratePitch,
@@ -152,26 +169,30 @@ export function RoomArtifactActions({
   prdError,
   landingError,
   pitchError,
+  artifactStatuses,
   isPrdPending,
   isLandingPending,
   isPitchPending,
-  confirmForcePrd,
   onCreatePrd,
-  onConfirmForcePrd,
-  onCancelForcePrd,
   onCreateLandingPage,
   onCreatePitchDeck,
 }: RoomArtifactActionsProps) {
   const reduceMotion = useReducedMotion();
 
   const pitchReady = Boolean(pitchDeckHtmlUrl || pitchDeckExportUrl);
+  const prdStatus = getStatus(artifactStatuses, "prd");
+  const landingStatus = getStatus(artifactStatuses, "landing-page");
+  const pitchStatus = getStatus(artifactStatuses, "pitch-deck");
+  const prdReady = Boolean(prdUrl) || prdStatus?.status === "ready";
+  const landingReady = Boolean(landingPageUrl) || landingStatus?.status === "ready";
+  const pitchIsReady = pitchReady || pitchStatus?.status === "ready";
   const deliverablePct = useMemo(() => {
     let n = 0;
-    if (prdUrl) n += 34;
-    if (landingPageUrl) n += 33;
-    if (pitchReady) n += 33;
+    if (prdReady) n += 34;
+    if (landingReady) n += 33;
+    if (pitchIsReady) n += 33;
     return Math.min(100, n);
-  }, [landingPageUrl, pitchReady, prdUrl]);
+  }, [landingReady, pitchIsReady, prdReady]);
 
   const blockHint =
     prdError || landingError || pitchError
@@ -190,18 +211,14 @@ export function RoomArtifactActions({
     >
       <div className="mb-2.5 flex items-center justify-end gap-2">
         <p className="text-[10px] font-semibold tracking-[0.3em] text-[#67e8f9]/90">OUTPUTS</p>
-        {isWrapped ? (
-          <span className="text-[9px] font-semibold tracking-[0.12em] text-[#fde68a]/90">WRAPPED</span>
-        ) : (
-          <span
-            className={cn(
-              "text-[9px] font-semibold tracking-[0.12em]",
-              isWrapUpPhase ? "text-[#a7f3d0]/90" : "text-white/35"
-            )}
-          >
-            {isWrapUpPhase ? "WRAP-UP" : "IN PROGRESS"}
-          </span>
-        )}
+        <span
+          className={cn(
+            "text-[9px] font-semibold tracking-[0.12em]",
+            isWrapped ? "text-[#fde68a]/90" : "text-[#a7f3d0]/90"
+          )}
+        >
+          {isWrapped ? "WRAPPED" : "IN PROGRESS"}
+        </span>
       </div>
       <div className="relative mb-3 h-[3px] w-full overflow-visible">
         <div
@@ -215,46 +232,69 @@ export function RoomArtifactActions({
       </div>
 
       <div className="flex items-start justify-end gap-5 sm:gap-6">
-        <Col code="PRD" hot={Boolean(prdUrl) || isPrdPending}>
+        <Col code="PRD" hot={prdReady || isPrdPending} status={prdStatus?.status}>
           {prdUrl ? (
             <GlowBtn onClick={() => downloadArtifact(prdUrl, "brainstorm-prd.md")}>MD</GlowBtn>
+          ) : prdStatus?.status === "ready" ? (
+            <GlowBtn disabled title="PRD đã sẵn sàng trên server">
+              READY
+            </GlowBtn>
           ) : (
             <GlowBtn
-              disabled={!canGeneratePrd}
-              pending={isPrdPending}
+              disabled={!canGeneratePrd || prdStatus?.status === "generating"}
+              pending={isPrdPending || prdStatus?.status === "generating"}
               onClick={onCreatePrd}
               title={prdHint ?? undefined}
             >
-              GEN
+              {prdStatus?.status === "failed" ? "RETRY" : "GEN"}
             </GlowBtn>
           )}
         </Col>
 
-        <Col code="WEB" hot={Boolean(landingPageUrl) || isLandingPending} warnings={landingWarnings}>
+        <Col
+          code="WEB"
+          hot={landingReady || isLandingPending}
+          warnings={landingWarnings}
+          status={landingStatus?.status}
+        >
           {landingPageUrl ? (
             <GlowBtn onClick={() => downloadArtifact(landingPageUrl, "landing-page.html")} amber>
               DL
             </GlowBtn>
+          ) : landingStatus?.status === "ready" ? (
+            <GlowBtn disabled amber title="Landing page đã sẵn sàng trên server">
+              READY
+            </GlowBtn>
           ) : (
             <GlowBtn
-              disabled={!canGenerateLanding}
-              pending={isLandingPending}
+              disabled={!canGenerateLanding || landingStatus?.status === "generating"}
+              pending={isLandingPending || landingStatus?.status === "generating"}
               onClick={onCreateLandingPage}
               amber
             >
-              GEN
+              {landingStatus?.status === "failed" ? "RETRY" : "GEN"}
             </GlowBtn>
           )}
         </Col>
 
-        <Col code="DCK" hot={pitchReady || isPitchPending} warnings={pitchWarnings}>
+        <Col
+          code="DCK"
+          hot={pitchIsReady || isPitchPending}
+          warnings={pitchWarnings}
+          status={pitchStatus?.status}
+        >
           {pitchReady ? (
             <span className="pointer-events-auto flex flex-wrap justify-end gap-2">
               {pitchDeckHtmlUrl ? (
-                <GlowBtn onClick={() => downloadArtifact(pitchDeckHtmlUrl, "pitch-deck.html")}>HTML</GlowBtn>
+                <GlowBtn onClick={() => downloadArtifact(pitchDeckHtmlUrl, "pitch-deck.html")}>
+                  HTML
+                </GlowBtn>
               ) : null}
               {pitchDeckExportUrl ? (
-                <GlowBtn onClick={() => downloadArtifact(pitchDeckExportUrl, "pitch-deck.pdf")} amber>
+                <GlowBtn
+                  onClick={() => downloadArtifact(pitchDeckExportUrl, "pitch-deck.pdf")}
+                  amber
+                >
                   PDF
                 </GlowBtn>
               ) : null}
@@ -266,12 +306,16 @@ export function RoomArtifactActions({
             </span>
           ) : (
             <GlowBtn
-              disabled={!canGeneratePitch}
-              pending={isPitchPending}
+              disabled={!canGeneratePitch || pitchStatus?.status === "generating"}
+              pending={isPitchPending || pitchStatus?.status === "generating"}
               onClick={onCreatePitchDeck}
               amber
             >
-              GEN
+              {pitchStatus?.status === "ready"
+                ? "READY"
+                : pitchStatus?.status === "failed"
+                  ? "RETRY"
+                  : "GEN"}
             </GlowBtn>
           )}
         </Col>
@@ -279,15 +323,15 @@ export function RoomArtifactActions({
 
       <div className="mt-3 flex items-center justify-end gap-3 text-[9px] font-semibold tracking-[0.14em] text-white/60">
         <span className="inline-flex items-center gap-1">
-          <StatusDot on={Boolean(prdUrl)} />
+          <StatusDot on={prdReady} alert={prdStatus?.status === "failed"} />
           PRD
         </span>
         <span className="inline-flex items-center gap-1">
-          <StatusDot on={Boolean(landingPageUrl)} />
+          <StatusDot on={landingReady} alert={landingStatus?.status === "failed"} />
           WEB
         </span>
         <span className="inline-flex items-center gap-1">
-          <StatusDot on={pitchReady} alert={isWrapped && !pitchReady} />
+          <StatusDot on={pitchIsReady} alert={pitchStatus?.status === "failed"} />
           DCK
         </span>
       </div>
@@ -304,42 +348,13 @@ export function RoomArtifactActions({
       </div>
 
       {blockHint ? (
-        <p className="pointer-events-none mt-2 max-w-full truncate text-[9px] text-white/45" title={blockHint}>
+        <p
+          className="pointer-events-none mt-2 max-w-full truncate text-[9px] text-white/45"
+          title={blockHint}
+        >
           {blockHint}
         </p>
       ) : null}
-
-      <AnimatePresence>
-        {confirmForcePrd ? (
-          <motion.div
-            className="pointer-events-auto mt-3 rounded-lg border border-amber-300/25 bg-[rgba(12,18,40,0.96)] p-3 text-left shadow-[0_8px_28px_rgba(0,0,0,0.4)]"
-            initial={reduceMotion ? false : { opacity: 0, y: -6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -6 }}
-            transition={{ duration: 0.2 }}
-          >
-            <p className="text-[11px] leading-snug text-amber-100/90">
-              Phiên chưa tới bước tổng kết — PRD tạo lúc này có thể sơ sài. Vẫn muốn tạo?
-            </p>
-            <div className="mt-2 flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={onCancelForcePrd}
-                className="text-[10px] font-semibold tracking-[0.1em] text-white/50 hover:text-white/80"
-              >
-                HUỶ
-              </button>
-              <button
-                type="button"
-                onClick={onConfirmForcePrd}
-                className="text-[10px] font-semibold tracking-[0.1em] text-[#fde68a] hover:text-[#fef3c7]"
-              >
-                VẪN TẠO
-              </button>
-            </div>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
     </motion.aside>
   );
 }

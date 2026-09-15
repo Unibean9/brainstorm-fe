@@ -36,7 +36,7 @@ export async function consumeSseStream(
     const name = eventName;
     eventName = "message";
 
-    if (raw === "[DONE]") return;
+    if (raw.trim() === "[DONE]") return;
 
     try {
       const envelope = JSON.parse(raw) as StreamEnvelope<unknown>;
@@ -60,9 +60,8 @@ export async function consumeSseStream(
     buffer = lines.pop() ?? "";
 
     for (const rawLine of lines) {
-      // SSE permits both LF and CRLF line endings. Some HTTPS proxies normalize the
-      // backend's LF-only stream to CRLF, so remove the optional CR before parsing
-      // fields and event boundaries.
+      // SSE permits LF, CRLF, and CR line endings. Normalize the trailing CR so
+      // event boundaries are still flushed when the proxy uses CRLF.
       const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
       if (line.startsWith(":")) continue;
       if (line === "") {

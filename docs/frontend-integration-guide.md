@@ -3,6 +3,7 @@
 > Đối tượng: đội FE xây UI thật cho giáo viên. Tài liệu này tổng hợp API/SSE contract đã
 > **implement và verify bằng code** (không phải chỉ trên giấy), đọc trực tiếp từ `src/` tại
 > thời điểm cập nhật:
+>
 > - `plans/260725-1400-tts-sentence-streaming` — audio phát theo từng câu, sync với text.
 > - `plans/260726-1500-teacher-auth-cloud-sync` — teacher/room/session domain model + header
 >   định danh.
@@ -12,17 +13,32 @@
 > Backend chỉ bind `127.0.0.1` (xem "Bảo mật" ở cuối) — FE chạy same-origin hoặc origin được
 > whitelist trong `BRAINSTORM_ALLOWED_ORIGINS`, không có gateway public.
 
+### API base URL khi chạy local
+
+`POST /rooms/:roomId/sessions` khởi động runtime provider trước khi trả response nên có thể mất
+hơn 30 giây. Khi đã có `NEXT_PUBLIC_API_URL`, FE browser gọi thẳng backend; đừng ép request qua
+Next rewrite bằng `NEXT_PUBLIC_API_USE_PROXY=true`, vì dev proxy có thể cắt request dài và trả
+`500 Internal Server Error` dù backend vẫn tiếp tục tạo session.
+
+```env
+NEXT_PUBLIC_API_URL=http://localhost:3001/
+NEXT_PUBLIC_API_USE_PROXY=false
+```
+
 ## 1. Tổng quan luồng sản phẩm
 
 ```
 1. Giáo viên nhập code + tên  → POST /teachers  → lưu teacherId (localStorage)
-2. Giáo viên tạo/chọn Room    → POST /rooms  (list bằng GET /rooms)
-3. Giáo viên tạo Session      → POST /rooms/:roomId/sessions
-4. Vòng lặp brainstorm:
+2. Giáo viên tạo/chọn Room    → POST /rooms  (room ghim runtimeProvider)
+3. Giáo viên tạo Session      → POST /rooms/:roomId/sessions với SessionSeed tối thiểu
+4. Các lượt đầu vừa brainstorm vừa thu thập WorkingBrief:
      - Nhóm nói / nhập text   → POST /sessions/:sessionId/turns  (SSE response)
      - FE render text-delta + phát agent-audio-chunk theo thứ tự
-5. Kết thúc (bắt buộc theo thứ tự này):
-     - POST /sessions/:sessionId/prd            → sinh PRD (chỉ khi phase = wrap-up), đóng session
+5. Khi đủ rõ, giáo viên xác nhận WorkingBrief → SessionBrief:
+     - PATCH /sessions/:sessionId/brief          → sửa context hoặc brief đã xác nhận
+     - POST /sessions/:sessionId/brief/confirm    → persist bản brief đã review
+6. Kết thúc / tạo output:
+     - POST /sessions/:sessionId/prd            → sinh PRD
      - POST /sessions/:sessionId/landing-page   → sinh landing page (yêu cầu đã có PRD)
      - POST /sessions/:sessionId/pitch-deck     → sinh pitch deck  (yêu cầu đã có PRD)
 ```
@@ -72,6 +88,7 @@ khôi phục khi giáo viên xoá `localStorage` hoặc chuyển sang thiết b�
 `409 teacher_code_taken`.
 
 **Lưu ý cho FE**:
+
 - Khi `isNew: false`, `name` trả về là **tên đã đăng ký**, không phải tên vừa gõ (đăng nhập không
   ghi đè tên, vì tên đó đã hiển thị trên các room/session cũ). Hãy hiển thị `data.name` từ response
   thay vì giá trị trong ô input.
@@ -79,9 +96,11 @@ khôi phục khi giáo viên xoá `localStorage` hoặc chuyển sang thiết b�
   danh chứ không phải xác thực, và `GET /rooms` vốn đã công khai `ownerTeacherId` của mọi giáo viên.
 
 ### `GET /teachers`
+
 ```
 200 → [{ code, name, createdAt }, ...]      // loại trừ hàng hệ thống `__legacy__`
 ```
+
 Không kèm `teacherId` — **không phải vì bảo mật** (xem §7: `GET /rooms` phát `ownerTeacherId` của
 mọi giáo viên mà không cần header), chỉ vì không client nào cần id từ endpoint này. Đừng viết copy
 UI kiểu "id được giấu để bảo vệ tài khoản".
@@ -97,11 +116,11 @@ kể cả `POST` — chúng là thao tác khắc phục sự cố cục bộ.
 
 Lỗi có thể gặp (FE nên map thành thông báo UI rõ ràng, không phải "lỗi chung chung"):
 
-| HTTP | code | Ý nghĩa | FE nên làm gì |
-|------|------|---------|----------------|
-| 401 | `teacher_required` | Thiếu header | Chưa đăng ký/chọn giáo viên → điều hướng về bước 1 |
-| 422 | `invalid_teacher_id` | Header không phải UUID | Bug FE — kiểm tra lại giá trị lưu |
-| 404 | `teacher_not_found` | teacherId không tồn tại (VD DB bị reset) | Xoá `teacherId` cục bộ, yêu cầu đăng ký lại |
+| HTTP | code                 | Ý nghĩa                                  | FE nên làm gì                                      |
+| ---- | -------------------- | ---------------------------------------- | -------------------------------------------------- |
+| 401  | `teacher_required`   | Thiếu header                             | Chưa đăng ký/chọn giáo viên → điều hướng về bước 1 |
+| 422  | `invalid_teacher_id` | Header không phải UUID                   | Bug FE — kiểm tra lại giá trị lưu                  |
+| 404  | `teacher_not_found`  | teacherId không tồn tại (VD DB bị reset) | Xoá `teacherId` cục bộ, yêu cầu đăng ký lại        |
 
 **Không cần header** trên bất kỳ `GET` nào, kể cả các route trả file mở trực tiếp trong
 tab/iframe: `GET /sessions/:id/prd`, `GET /sessions/:id/landing-page`,
@@ -111,47 +130,64 @@ gắn được custom header khi điều hướng URL trực tiếp).
 ## 3. Room & Session
 
 ### `POST /rooms` — header bắt buộc
+
 ```
-Body: { name: string }   // 1-200 bytes, không control character; field lạ → 422 invalid_room
-201 → { roomId: "rm_<uuid>", name, ownerTeacherId, createdAt }
+Body: { name: string, runtimeProvider?: "claude"|"codex" }
+201 → { roomId: "rm_<uuid>", name, runtimeProvider, ownerTeacherId, createdAt }
 422 invalid_name | invalid_room
 ```
+
 Lưu ý: `roomId` luôn có tiền tố `rm_` — đây là id-space riêng biệt với `sessionId` (uuid trần).
 Không bao giờ dùng `roomId` ở chỗ API mong đợi `sessionId` và ngược lại.
 
 ### `GET /rooms` — không cần header
+
 ```
 200 → [{ roomId, name, ownerTeacherId, ownerName, createdAt }, ...]
 ```
+
 Danh sách **tất cả** room trên instance (không lọc theo teacher hiện tại) — vì đây là công cụ
 1 máy cục bộ dùng chung, lọc sẽ chỉ tạo ra danh sách rỗng gây khó hiểu nếu giáo viên đổi code.
 Loại trừ room hệ thống (`Legacy`).
 
 ### `POST /rooms/:roomId/sessions` — header bắt buộc
+
 ```
-Body: { name: string }
-201 → { sessionId, voiceId, engineStep, phaseKey, state, transcript, activeTurn, roomId, name }
+Body: { topic: string, language: "vi"|"en", voiceId: string }
+// `name` remains a compatibility alias; new clients should send `topic`.
+201 → { sessionId, runtimeProvider, seed, workingBrief, briefStatus, briefRevision,
+        adaptiveState, voiceId, engineStep, phaseKey, state, transcript, activeTurn, roomId, name }
 422 invalid_room_id | invalid_name | invalid_session
 404 room_not_found
 502 facilitator_start_failed   // Claude CLI process không khởi động được
 ```
+
 Đây là **cách duy nhất** để tạo session — route cũ `POST /sessions` (không có room) đã bị xoá
 hẳn, không phải deprecate. Backend khởi động facilitator **trước** khi ghi row session, nên khi
 gặp `502 facilitator_start_failed` thì không có session rác nào được tạo — FE cứ cho người dùng
 bấm tạo lại.
 
 ### `GET /rooms/:roomId/sessions` — không cần header
+
 ```
-200 → [{ sessionId, name, status, phaseKey, createdAt }, ...]  // mới nhất trước
+200 → [{ sessionId, name, status, phaseKey, runtimeProvider, briefStatus, briefRevision, createdAt }, ...]  // mới nhất trước
 422 invalid_room_id | 404 room_not_found
 ```
+
 `status` là trạng thái vòng đời của session (`wrapped` = đã sinh PRD, không nhận turn mới nữa) —
 khác với `state` (`idle`/`processing`) trong snapshot bên dưới, vốn chỉ nói về turn đang chạy.
 
 ### `GET /sessions/:sessionId` — snapshot đầy đủ, không cần header
+
 ```ts
 {
-  sessionId, voiceId: "default",
+  sessionId, runtimeProvider: "claude"|"codex", voiceId,
+  seed: { topic, language, voiceId },
+  workingBrief: { goal, context, constraints, audience, successCriteria },
+  briefStatus: "discovery"|"ready_for_confirmation"|"confirmed",
+  briefRevision: number,
+  adaptiveState: { cognitiveIntent, userState },
+  brief: SessionBrief | null,
   engineStep: number,          // 0-7, dùng để highlight node trong sơ đồ engine nếu FE có UI đó
   phaseKey: 'framing'|'diverging'|'shifting'|'critiquing'|'converging'|'wrap-up',
   state: 'idle' | 'processing',
@@ -161,6 +197,7 @@ khác với `state` (`idle`/`processing`) trong snapshot bên dưới, vốn ch�
   } | null
 }
 ```
+
 Dùng route này để **khôi phục UI sau khi F5 hoặc mất kết nối giữa chừng** — không có API resume
 SSE riêng, chỉ có polling/snapshot lại toàn bộ trạng thái.
 
@@ -172,12 +209,29 @@ enable/disable input.
 ### `PATCH /sessions/:sessionId/voice` — **đã bị xoá**
 
 Route này không còn tồn tại (gọi vào sẽ nhận `404 route_not_found`). Nó chỉ validate rồi echo lại
-đúng giá trị `"default"` mà không lưu gì cả. Hiện hệ thống chỉ có một giọng; `voiceId` trong
-snapshot luôn là `"default"` và là read-only với FE.
+đúng giá trị đã chọn mà không lưu gì cả. `voiceId` là thuộc tính read-only sau khi session được
+tạo; FE lấy danh sách giọng từ `GET /voices` và không cần PATCH lại trong session.
+
+`runtimeProvider` là provider của conversation chính và được ghim trong room; nó không phải
+facilitation mode. Mode là trạng thái adaptive (`facilitator ↔ creative_partner`) và có thể đổi
+giữa các turn. Nếu cần provider khác, FE phải mở subtask/fork/handoff explicit với snapshot đã
+ground rồi đưa kết quả về conversation chính; không silent-switch runtime.
+
+### Progressive brief
+
+`WorkingBrief` là context advisory được agent cập nhật qua các turn và chưa phải artifact durable.
+FE chỉ gọi `POST /sessions/:sessionId/brief/confirm` sau khi giáo viên review. Nếu context thay đổi,
+gọi `PATCH /sessions/:sessionId/brief` để cập nhật WorkingBrief hoặc tạo revision mới cho
+SessionBrief đã xác nhận.
+
+SSE `advisory-state` có thể kèm `cognitiveIntent`, `userState`, `suggestedFacilitationMode`,
+`workingBrief`, `briefReady`; đây là state advisory để render UX, không thay lifecycle state. SSE
+`facilitation-mode` báo mode adaptive đã persist và có hiệu lực từ `next_turn`.
 
 ## 4. Gửi lượt nói — `POST /sessions/:sessionId/turns` (SSE)
 
 Header bắt buộc. Body:
+
 ```ts
 {
   clientTurnId: string,   // ≤128 bytes, do FE tự sinh, idempotency key
@@ -185,21 +239,23 @@ Header bắt buộc. Body:
   audioMode?: 'streaming' | 'standard' | 'text',   // mặc định 'streaming'
 }
 ```
+
 Field lạ ngoài 3 cái trên → `422 invalid_turn`.
 
 ### `audioMode` — chọn cách sinh audio cho lượt này
 
-| Mode | Hành vi | Khi nào dùng |
-|------|---------|--------------|
-| `streaming` (mặc định) | TTS theo từng câu **ngay trong lúc** Claude sinh text; audio chunk tới xen kẽ `text-delta` | Mặc định — time-to-first-audio thấp nhất |
-| `standard` | Một lần gọi TTS cho toàn bộ câu trả lời, phát **sau** `text-done` | Khi endpoint streaming của sidecar chập chờn; chỉ 1 chunk lớn |
-| `text` | Không gọi TTS, không có `agent-audio-chunk` nào | Chế độ đọc thầm / môi trường không loa |
+| Mode                   | Hành vi                                                                                    | Khi nào dùng                                                  |
+| ---------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| `streaming` (mặc định) | TTS theo từng câu **ngay trong lúc** Claude sinh text; audio chunk tới xen kẽ `text-delta` | Mặc định — time-to-first-audio thấp nhất                      |
+| `standard`             | Một lần gọi TTS cho toàn bộ câu trả lời, phát **sau** `text-done`                          | Khi endpoint streaming của sidecar chập chờn; chỉ 1 chunk lớn |
+| `text`                 | Không gọi TTS, không có `agent-audio-chunk` nào                                            | Chế độ đọc thầm / môi trường không loa                        |
 
 Ở cả 3 mode, `agent-audio-done` vẫn được phát ở cuối turn (kể cả `text`) — đừng dùng nó để suy ra
 "có audio hay không".
 
 **`clientTurnId` là khoá idempotency** — nếu FE gửi lại đúng `clientTurnId` (VD do mạng
 timeout rồi retry), backend trả lại kết quả turn cũ thay vì tạo turn mới:
+
 - Nếu turn cũ đã `completed` → HTTP 200 + `data: { operation, snapshot }` (JSON thường, không
   phải SSE) — FE nên kiểm tra `content-type` của response, thấy không phải `text/event-stream`
   thì xử lý như "đã xong rồi" và render từ `snapshot`.
@@ -218,14 +274,14 @@ timeout rồi retry), backend trả lại kết quả turn cũ thay vì tạo tu
 
 Lỗi trước khi vào SSE:
 
-| HTTP | code | Ý nghĩa |
-|------|------|---------|
-| 422 | `invalid_session_id` | sessionId không phải UUID |
-| 404 | `session_not_found` | — |
-| 409 | `session_wrapped` | Session đã đóng sau khi sinh **PRD** — không nhận turn mới nữa |
-| 422 | `invalid_turn` | Thiếu/sai `clientTurnId`, `text`, hoặc `audioMode` không hợp lệ |
-| 413 | `input_too_large` | Vượt 12000 bytes text hoặc 128 bytes clientTurnId |
-| 500 | `operation_create_failed` | Lỗi ghi SQLite cục bộ — không phải lỗi tạm, retry không giúp |
+| HTTP | code                      | Ý nghĩa                                                         |
+| ---- | ------------------------- | --------------------------------------------------------------- |
+| 422  | `invalid_session_id`      | sessionId không phải UUID                                       |
+| 404  | `session_not_found`       | —                                                               |
+| 409  | `session_wrapped`         | Session đã đóng sau khi sinh **PRD** — không nhận turn mới nữa  |
+| 422  | `invalid_turn`            | Thiếu/sai `clientTurnId`, `text`, hoặc `audioMode` không hợp lệ |
+| 413  | `input_too_large`         | Vượt 12000 bytes text hoặc 128 bytes clientTurnId               |
+| 500  | `operation_create_failed` | Lỗi ghi SQLite cục bộ — không phải lỗi tạm, retry không giúp    |
 
 Một room chỉ xử lý 1 operation tại một thời điểm (kể cả sinh PRD/landing/deck) — nhưng khác với
 bản trước, `room_busy` giờ **không còn là lỗi trước khi vào SSE nữa**: turn được backend nhận
@@ -239,6 +295,7 @@ lúc một turn đang chạy (route đó trả `409 room_busy` trước khi có 
 ### SSE event contract (khi request thành công, response là `text/event-stream`)
 
 Mỗi event có payload dạng:
+
 ```ts
 { sessionId, turnId, seq, ts, data: {...} }   // seq tăng dần, dùng để order/dedupe nếu cần
 ```
@@ -283,9 +340,10 @@ chỉnh, đã coalesce ≥0.5s — phát tuần tự theo đúng thứ tự nh�
 overlap. Pattern khuyến nghị (đã dùng trong `public/demo.html`):
 
 ```js
-let queue = [], playing = false;
+let queue = [],
+  playing = false;
 function enqueueAudioChunk(base64) {
-  const url = URL.createObjectURL(base64ToBlob(base64, 'audio/wav'));
+  const url = URL.createObjectURL(base64ToBlob(base64, "audio/wav"));
   queue.push(url);
   playNextIfIdle();
 }
@@ -294,7 +352,11 @@ function playNextIfIdle() {
   playing = true;
   const url = queue.shift();
   audioEl.src = url;
-  audioEl.onended = () => { URL.revokeObjectURL(url); playing = false; playNextIfIdle(); };
+  audioEl.onended = () => {
+    URL.revokeObjectURL(url);
+    playing = false;
+    playNextIfIdle();
+  };
   audioEl.play();
 }
 ```
@@ -306,6 +368,7 @@ error { code: string, recoverable: boolean }   // event name = "error"
 ```
 
 Năm case:
+
 - `code: "audio_unavailable", recoverable: true` — TTS sidecar lỗi/timeout/không chạy. **Turn
   vẫn hoàn tất bình thường** (`text-done`, `state: idle` vẫn tới) — chỉ mất audio, KHÔNG coi
   đây là turn fail. FE nên hiển thị "không có audio cho lượt này" chứ không phải lỗi đỏ toàn màn
@@ -387,13 +450,13 @@ GET  /sessions/:id/prd                → text/markdown, kèm content-dispositio
                                         render, đừng trỏ iframe vào đây.
 ```
 
-| HTTP | code | Ý nghĩa |
-|------|------|---------|
-| 409 | `phase_not_complete` | Session chưa tới phase `wrap-up`. Recoverable — xem ghi chú `force` |
-| 409 | `prd_not_ready` | Chưa có nội dung để sinh (không có trace, hoặc đang có operation chạy dở); trên `GET` nghĩa là chưa sinh PRD |
-| 409 | `room_busy` | Room đang bận việc khác |
-| 502 | `prd_failed` | Sinh PRD thất bại |
-| 422 | `invalid_session_id` / 404 `session_not_found` | — |
+| HTTP | code                                           | Ý nghĩa                                                                                                      |
+| ---- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| 409  | `phase_not_complete`                           | Session chưa tới phase `wrap-up`. Recoverable — xem ghi chú `force`                                          |
+| 409  | `prd_not_ready`                                | Chưa có nội dung để sinh (không có trace, hoặc đang có operation chạy dở); trên `GET` nghĩa là chưa sinh PRD |
+| 409  | `room_busy`                                    | Room đang bận việc khác                                                                                      |
+| 502  | `prd_failed`                                   | Sinh PRD thất bại                                                                                            |
+| 422  | `invalid_session_id` / 404 `session_not_found` | —                                                                                                            |
 
 **`?force=true`** bỏ qua đúng một điều kiện: gate `phase_not_complete`. FE nên để nút chính
 disabled cho tới khi `phaseKey === 'wrap-up'`, và chỉ mở `force` sau một hộp thoại xác nhận
@@ -479,11 +542,11 @@ mirror ghi-only — **không có API đọc lại từ cloud vào app**, local S
 
 Mọi request đều đi qua một hook kiểm tra trước khi tới route:
 
-| HTTP | code | Khi nào |
-|------|------|---------|
-| 403 | `forbidden_host` | Header `Host` không thuộc `127.0.0.1` / `localhost` / `[::1]` (±`:PORT`). Chống DNS rebinding — một hostname trỏ về 127.0.0.1 vẫn bị chặn |
-| 403 | `forbidden_origin` | Request **có** `Origin` không nằm trong allowlist và method khác `GET`/`OPTIONS` |
-| 404 | `route_not_found` | Không khớp route nào |
+| HTTP | code               | Khi nào                                                                                                                                   |
+| ---- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| 403  | `forbidden_host`   | Header `Host` không thuộc `127.0.0.1` / `localhost` / `[::1]` (±`:PORT`). Chống DNS rebinding — một hostname trỏ về 127.0.0.1 vẫn bị chặn |
+| 403  | `forbidden_origin` | Request **có** `Origin` không nằm trong allowlist và method khác `GET`/`OPTIONS`                                                          |
+| 404  | `route_not_found`  | Không khớp route nào                                                                                                                      |
 
 Allowlist mặc định: `http://localhost:3000`, `http://127.0.0.1:3000`, `http://localhost:5173`,
 `http://127.0.0.1:5173` — đổi bằng env `BRAINSTORM_ALLOWED_ORIGINS` (danh sách origin chuẩn hoá,
@@ -519,16 +582,16 @@ backend đã chạy chưa.
 
 Nếu FE đã code theo bản cũ, đây là danh sách cần sửa:
 
-| Cũ | Mới |
-|----|-----|
-| `POST/GET /sessions/:id/report`, `{ reportUrl }` | `POST/GET /sessions/:id/prd`, `{ prdUrl, generatedAt }` |
-| Sinh report bất cứ lúc nào | Chặn bằng `409 phase_not_complete` cho tới phase `wrap-up` (bỏ qua bằng `?force=true`) |
-| Landing page / pitch deck độc lập | Cả hai yêu cầu đã có PRD, nếu không → `409 prd_not_ready` |
-| pitch-deck `Body: { format: 'pptx' \| 'pdf' }`, `GET .../pitch-deck/:format` | Không còn body, không còn PPTX; `GET .../pitch-deck/pdf` cố định |
-| `PATCH /sessions/:id/voice` | Đã xoá → `404 route_not_found` |
-| Turn body chỉ có `clientTurnId`, `text` | Thêm `audioMode?: 'streaming' \| 'standard' \| 'text'` |
-| SSE error chỉ có `audio_unavailable`, `turn_failed` | Thêm `audio_truncated`, `client_disconnected` |
-| `cloud-sync/status.failed[].lastError` là string | Là object `{ code, hint }` hoặc `null` |
-| Đóng kết nối SSE huỷ turn, đánh dấu `interrupted` | Turn chạy độc lập với request; đóng SSE chỉ dừng audio phía client đó, turn vẫn chạy tới khi xong |
-| `room_busy` khi gửi turn luôn là `409` trước khi mở SSE | `room_busy` cho `POST .../turns` giờ tới dưới dạng **event `error` trong stream** (stream đã mở `200`); `409` trước-stream không còn xảy ra cho case này (route sinh artifact vẫn trả `409 room_busy` như cũ) |
-| `client_disconnected` nghĩa là "kết nối bị đứt" | Code này giờ chỉ phát khi backend tự huỷ turn nội bộ (hết hạn chạy, mất lease, shutdown) — disconnect thật sự không còn kích hoạt nó |
+| Cũ                                                                           | Mới                                                                                                                                                                                                           |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST/GET /sessions/:id/report`, `{ reportUrl }`                             | `POST/GET /sessions/:id/prd`, `{ prdUrl, generatedAt }`                                                                                                                                                       |
+| Sinh report bất cứ lúc nào                                                   | Chặn bằng `409 phase_not_complete` cho tới phase `wrap-up` (bỏ qua bằng `?force=true`)                                                                                                                        |
+| Landing page / pitch deck độc lập                                            | Cả hai yêu cầu đã có PRD, nếu không → `409 prd_not_ready`                                                                                                                                                     |
+| pitch-deck `Body: { format: 'pptx' \| 'pdf' }`, `GET .../pitch-deck/:format` | Không còn body, không còn PPTX; `GET .../pitch-deck/pdf` cố định                                                                                                                                              |
+| `PATCH /sessions/:id/voice`                                                  | Đã xoá → `404 route_not_found`                                                                                                                                                                                |
+| Turn body chỉ có `clientTurnId`, `text`                                      | Thêm `audioMode?: 'streaming' \| 'standard' \| 'text'`                                                                                                                                                        |
+| SSE error chỉ có `audio_unavailable`, `turn_failed`                          | Thêm `audio_truncated`, `client_disconnected`                                                                                                                                                                 |
+| `cloud-sync/status.failed[].lastError` là string                             | Là object `{ code, hint }` hoặc `null`                                                                                                                                                                        |
+| Đóng kết nối SSE huỷ turn, đánh dấu `interrupted`                            | Turn chạy độc lập với request; đóng SSE chỉ dừng audio phía client đó, turn vẫn chạy tới khi xong                                                                                                             |
+| `room_busy` khi gửi turn luôn là `409` trước khi mở SSE                      | `room_busy` cho `POST .../turns` giờ tới dưới dạng **event `error` trong stream** (stream đã mở `200`); `409` trước-stream không còn xảy ra cho case này (route sinh artifact vẫn trả `409 room_busy` như cũ) |
+| `client_disconnected` nghĩa là "kết nối bị đứt"                              | Code này giờ chỉ phát khi backend tự huỷ turn nội bộ (hết hạn chạy, mất lease, shutdown) — disconnect thật sự không còn kích hoạt nó                                                                          |
