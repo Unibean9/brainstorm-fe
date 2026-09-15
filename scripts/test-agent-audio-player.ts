@@ -276,6 +276,18 @@ async function testFinalTextKeepsFullTranscriptAndRejectsMismatchedOffsets() {
   assert.equal(transcript[0]?.text, "different final text");
   assert.equal(transcript[0]?.audioSegments, undefined);
   assert.deepEqual(warnings, []);
+
+  // A terminal error must release the pending turn even without agent-audio-done.
+  applyTurnStreamEvent("error", envelope({ code: "turn_failed", recoverable: false }), ctx);
+  assert.equal(player.isPlaying, false);
+  await player.whenIdle();
+
+  // The next turn must get fresh completion state, including a short/audio-free reply.
+  applyTurnStreamEvent("agent-run-started", envelope({ messageId: "next" }), ctx);
+  assert.equal(player.isPlaying, true);
+  applyTurnStreamEvent("agent-audio-done", envelope({ messageId: "next" }), ctx);
+  await player.whenIdle();
+  assert.equal(player.isPlaying, false);
 }
 
 async function main() {

@@ -342,6 +342,7 @@ export function applyTurnStreamEvent(
       }
       // room_busy | turn_failed | client_disconnected — turn coi như kết thúc, cho gửi lại
       ctx.stopFiller?.();
+      ctx.audio.markStreamComplete();
       ctx.setError(data.code);
       break;
     }

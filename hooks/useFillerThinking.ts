@@ -12,43 +12,44 @@ import {
   writeFillerEnabledPreference,
 } from "@/lib/brainstorm/filler-storage";
 import type { BrainstormFillerAsset, BrainstormPhaseKey } from "@/types/brainstorm-stream";
-import type { BrainstormLanguage } from "@/types/brainstorm-domain";
 
-/** Ưu tiên filler khớp phase, voice và language; legacy metadata vẫn có fallback an toàn. */
+type FillerLanguage = "vi" | "en";
+type FillerWithMetadata = BrainstormFillerAsset & {
+  /** Added by the current catalog contract; optional for older deployed FE source. */
+  lang?: FillerLanguage | null;
+};
+
+/** Chỉ chọn filler đúng voice; thiếu metadata thì không phát để tránh lẫn giọng. */
 function pickFiller(
-  fillers: BrainstormFillerAsset[],
+  fillers: FillerWithMetadata[],
   phaseKey: BrainstormPhaseKey | null,
   voiceId: string | null,
-  language: BrainstormLanguage | null
+  language: FillerLanguage | null
 ) {
-  if (!fillers.length) return null;
+  if (!fillers.length || !voiceId) return null;
 
   const byVoicePhaseLanguage = fillers.filter(
     (f) =>
-      (!voiceId || f.voiceId === voiceId) &&
+      f.voiceId === voiceId &&
       (!phaseKey || f.phase === phaseKey) &&
       (!language || f.lang === language)
   );
   const byVoicePhaseLegacy = fillers.filter(
-    (f) =>
-      (!voiceId || f.voiceId === voiceId) && (!phaseKey || f.phase === phaseKey) && f.lang == null
+    (f) => f.voiceId === voiceId && (!phaseKey || f.phase === phaseKey) && f.lang == null
   );
   const byVoiceLanguage = fillers.filter(
-    (f) => (!voiceId || f.voiceId === voiceId) && (!language || f.lang === language)
+    (f) => f.voiceId === voiceId && (!language || f.lang === language)
   );
-  const byVoice = fillers.filter((f) => !voiceId || f.voiceId === voiceId);
-  const byLanguage = language ? fillers.filter((f) => f.lang === language) : [];
+  const byVoice = fillers.filter((f) => f.voiceId === voiceId);
   const pool = byVoicePhaseLanguage.length
     ? byVoicePhaseLanguage
     : byVoicePhaseLegacy.length
       ? byVoicePhaseLegacy
       : byVoiceLanguage.length
         ? byVoiceLanguage
-        : byLanguage.length
-          ? byLanguage
-          : byVoice.length
-            ? byVoice
-            : fillers;
+        : byVoice;
+
+  if (!pool.length) return null;
 
   return pool[Math.floor(Math.random() * pool.length)]!;
 }
@@ -60,7 +61,7 @@ type UseFillerThinkingOptions = {
   isProcessing: boolean;
   phaseKey?: BrainstormPhaseKey | null;
   voiceId?: string | null;
-  language?: BrainstormLanguage | null;
+  language?: FillerLanguage | null;
 };
 
 export function useFillerThinking({
@@ -92,7 +93,9 @@ export function useFillerThinking({
     if (!next) playerRef.current?.stop();
   }, []);
 
-  const shouldPlay = sessionActive && enabled && isProcessing;
+  // Do not start the thinking clip while the snapshot is still loading. A null voice must never
+  // fall through to a random catalog-wide asset.
+  const shouldPlay = sessionActive && enabled && isProcessing && Boolean(voiceId);
 
   useEffect(() => {
     const player = ensurePlayer();

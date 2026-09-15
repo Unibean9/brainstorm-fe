@@ -336,30 +336,25 @@ không phải JSON — FE parse SSE phải bỏ qua/đặc-cách event này, đ�
 **Điểm quan trọng nhất cho FE audio player**: với `audioMode: 'streaming'`, `agent-audio-chunk`
 bắt đầu tới **trong lúc**
 `text-delta` vẫn đang chảy, không phải sau `text-done`. Mỗi chunk là 1 file WAV độc lập, hoàn
-chỉnh, đã coalesce ≥0.5s — phát tuần tự theo đúng thứ tự nhận được (không interleave), không
-overlap. Pattern khuyến nghị (đã dùng trong `public/demo.html`):
+chỉnh, được gom theo `TTS_MIN_CHUNK_SECONDS` (mặc định 0,25 giây; chunk cuối có thể ngắn hơn). Player nên
+giải mã chunk bằng Web Audio API và xếp các `AudioBufferSourceNode` nối tiếp trên cùng một
+timeline; không nên đổi `src` của `HTMLAudioElement` sau mỗi chunk vì sẽ tạo khoảng hẫng giữa
+các file. Player hiện tại nằm ở `lib/audio/agent-audio-player.ts`: decode trước, giữ thứ tự
+segment/sample, đặt lead ban đầu 100 ms và nối chunk đã sẵn trên cùng audio clock. Nếu Web Audio
+không khả dụng hoặc decode thất bại, player báo lỗi để UI xử lý.
 
 ```js
-let queue = [],
-  playing = false;
-function enqueueAudioChunk(base64) {
-  const url = URL.createObjectURL(base64ToBlob(base64, "audio/wav"));
-  queue.push(url);
-  playNextIfIdle();
-}
-function playNextIfIdle() {
-  if (playing || !queue.length) return;
-  playing = true;
-  const url = queue.shift();
-  audioEl.src = url;
-  audioEl.onended = () => {
-    URL.revokeObjectURL(url);
-    playing = false;
-    playNextIfIdle();
-  };
-  audioEl.play();
-}
+// Dùng player chung của session; unlock() từ thao tác của người dùng.
+await player.unlock();
+player.beginTurn(messageId); // agent-run-started: reset turn cũ
+// Mỗi agent-audio-chunk: enqueue ngay, không await playback trong SSE handler.
+void player.enqueue({ chunkBase64, encoding: "audio/wav", messageId }).catch(onAudioError);
+player.markAudioDone(messageId); // agent-audio-done: phát hết phần đã nhận
+await player.whenIdle(); // trước khi hydrate snapshot cuối
 ```
+
+`apply-turn-event.ts` còn chuyển `agent-audio-segment` và `agent-audio-segment-done` vào player,
+kèm source offsets và sample metadata để highlight đoạn đang phát và đo drift.
 
 ### Error event trong lúc SSE đang chạy
 
