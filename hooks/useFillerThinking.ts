@@ -12,14 +12,19 @@ import {
   writeFillerEnabledPreference,
 } from "@/lib/brainstorm/filler-storage";
 import type { BrainstormFillerAsset, BrainstormPhaseKey } from "@/types/brainstorm-stream";
-import type { BrainstormLanguage } from "@/types/brainstorm-domain";
+
+type FillerLanguage = "vi" | "en";
+type FillerWithMetadata = BrainstormFillerAsset & {
+  /** Added by the current catalog contract; optional for older deployed FE source. */
+  lang?: FillerLanguage | null;
+};
 
 /** Chỉ chọn filler đúng voice; thiếu metadata thì không phát để tránh lẫn giọng. */
 function pickFiller(
-  fillers: BrainstormFillerAsset[],
+  fillers: FillerWithMetadata[],
   phaseKey: BrainstormPhaseKey | null,
   voiceId: string | null,
-  language: BrainstormLanguage | null
+  language: FillerLanguage | null
 ) {
   if (!fillers.length || !voiceId) return null;
 
@@ -56,7 +61,7 @@ type UseFillerThinkingOptions = {
   isProcessing: boolean;
   phaseKey?: BrainstormPhaseKey | null;
   voiceId?: string | null;
-  language?: BrainstormLanguage | null;
+  language?: FillerLanguage | null;
 };
 
 export function useFillerThinking({
