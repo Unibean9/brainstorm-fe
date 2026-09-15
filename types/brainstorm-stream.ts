@@ -55,6 +55,15 @@ export type AgentTextCompletedPayload = StreamEnvelope<{
   stage?: string;
 }>;
 
+/** Speech segment mapped to an exact range in the assistant's final text. */
+export type AgentAudioSegmentPayload = StreamEnvelope<{
+  messageId: string;
+  segmentId: string;
+  textStart: number;
+  textEnd: number;
+  traceId?: string;
+}>;
+
 export type ReasoningState = {
   stage?: string;
   technique?: string;
@@ -92,10 +101,25 @@ export type AgentAudioChunkPayload = StreamEnvelope<{
   messageId: string;
   encoding: "audio/wav";
   audioBase64: string;
+  /** Additive metadata. Legacy WAV frames may omit these fields. */
+  traceId?: string;
+  segmentId?: string;
+  chunkIndex?: number;
+  sampleRate?: number;
+  startSample?: number;
+  sampleCount?: number;
 }>;
 
 export type AgentAudioDonePayload = StreamEnvelope<{
   messageId: string;
+}>;
+
+export type AgentAudioSegmentDonePayload = StreamEnvelope<{
+  messageId: string;
+  segmentId: string;
+  totalSamples: number;
+  sampleRate: number;
+  traceId?: string;
 }>;
 
 export type AgentStreamErrorPayload = StreamEnvelope<{

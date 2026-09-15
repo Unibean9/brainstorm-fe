@@ -1,10 +1,13 @@
-import type { TranscriptEntry } from "@/app/session/data/room-graph-types";
+import type { AudioTextSegment, TranscriptEntry } from "@/app/session/data/room-graph-types";
 import type { WorkflowNodeId } from "@/app/session/components/room-orb-layout";
 import { mapBePhaseToUi } from "@/lib/brainstorm/map-session-snapshot";
 import { normalizeEngineStepPayload } from "@/lib/brainstorm/engine-steps";
 import type { AgentAudioPlayer } from "@/lib/audio/agent-audio-player";
 import type {
   AgentAudioChunkPayload,
+  AgentAudioDonePayload,
+  AgentAudioSegmentDonePayload,
+  AgentAudioSegmentPayload,
   AgentRunStartedPayload,
   AgentStreamErrorPayload,
   AgentTextCompletedPayload,
@@ -53,7 +56,68 @@ function upsertAgentDelta(
     ];
   }
   const next = [...prev];
-  next[idx] = { ...next[idx]!, text: next[idx]!.text + delta };
+  const entry = { ...next[idx]!, text: next[idx]!.text + delta };
+  next[idx] = {
+    ...entry,
+    audioSegments: captureAudioSegmentText(entry.audioSegments, entry.text),
+  };
+  return next;
+}
+
+function captureAudioSegmentText(segments: AudioTextSegment[] | undefined, text: string) {
+  if (!segments?.length) return segments;
+  return segments.map((segment) => {
+    if (
+      segment.textStart < 0 ||
+      segment.textEnd <= segment.textStart ||
+      segment.textEnd > text.length
+    ) {
+      return segment;
+    }
+    return { ...segment, textSnapshot: text.slice(segment.textStart, segment.textEnd) };
+  });
+}
+
+function isAudioSegmentValid(segment: AudioTextSegment, text: string) {
+  return (
+    segment.textStart >= 0 &&
+    segment.textEnd > segment.textStart &&
+    segment.textEnd <= text.length &&
+    Boolean(segment.textSnapshot) &&
+    segment.textSnapshot === text.slice(segment.textStart, segment.textEnd)
+  );
+}
+
+function addAudioSegment(
+  prev: TranscriptEntry[],
+  data: AgentAudioSegmentPayload["data"]
+): TranscriptEntry[] {
+  const idx = prev.findIndex((entry) => entry.id === data.messageId);
+  const segment: AudioTextSegment = {
+    segmentId: data.segmentId,
+    textStart: data.textStart,
+    textEnd: data.textEnd,
+    textSnapshot: "",
+  };
+  if (idx === -1) {
+    return [
+      ...prev,
+      {
+        id: data.messageId,
+        speaker: "agent",
+        text: "",
+        time: formatTime(Date.now()),
+        timestampMs: Date.now(),
+        phaseKey: "Framing",
+        audioSegments: [segment],
+      },
+    ];
+  }
+  const next = [...prev];
+  const entry = next[idx]!;
+  const existing = entry.audioSegments?.filter((item) => item.segmentId !== data.segmentId) ?? [];
+  const captured = captureAudioSegmentText([...existing, segment], entry.text);
+  next[idx] = { ...entry, audioSegments: captured };
   return next;
 }
 
@@ -91,7 +155,13 @@ export function applyTurnStreamEvent(
       // audio phía client (AgentAudioPlayer) đã phát xong thật hay chưa. Nếu
       // đổi sang state khác "agent-speaking" trong lúc audio còn đang phát,
       // đợi phát xong rồi mới đổi để animation "đang nói" không tắt sớm.
-      if (data.state !== "agent-speaking" && ctx.audio.isPlaying) {
+      if (data.state === "agent-speaking") {
+        // The browser player owns the speaking state once an AudioBufferSource
+        // reaches its scheduled start. Backend state alone may arrive before
+        // the first decode and is therefore not a playback clock.
+        break;
+      }
+      if (ctx.audio.isPlaying) {
         void ctx.audio.whenIdle().then(() => {
           if (!ctx.audio.isPlaying) ctx.setState(data.state);
         });
@@ -103,10 +173,17 @@ export function applyTurnStreamEvent(
     }
     case "agent-run-started": {
       const { data, ts } = envelope as AgentRunStartedPayload;
+      ctx.audio.beginTurn(data.messageId);
       ctx.setTranscript((prev) => {
-        if (prev.some((e) => e.id === data.messageId)) return prev;
+        const cleared = prev.map((entry) => {
+          if (!entry.activeAudioSegmentId) return entry;
+          const withoutActive = { ...entry };
+          delete withoutActive.activeAudioSegmentId;
+          return withoutActive;
+        });
+        if (cleared.some((e) => e.id === data.messageId)) return cleared;
         return [
-          ...prev,
+          ...cleared,
           {
             id: data.messageId,
             speaker: "agent",
@@ -121,15 +198,26 @@ export function applyTurnStreamEvent(
     }
     case "text-delta": {
       const { data, ts } = envelope as AgentTextDeltaPayload;
+      ctx.audio.noteTextEvent(data.messageId, data.delta.length);
       ctx.setTranscript((prev) => upsertAgentDelta(prev, data.messageId, data.delta, ts));
       break;
     }
     case "text-done": {
       const { data, ts } = envelope as AgentTextCompletedPayload;
+      ctx.audio.noteTextEvent(data.messageId);
       ctx.setSessionPhaseKey(data.phaseKey ?? "framing");
       const phaseKey = mapBePhaseToUi(data.phaseKey);
       ctx.setTranscript((prev) => {
         const idx = prev.findIndex((e) => e.id === data.messageId);
+        const previous = idx === -1 ? undefined : prev[idx];
+        const audioSegments = previous?.audioSegments?.filter((segment) =>
+          isAudioSegmentValid(segment, data.text)
+        );
+        const activeAudioSegmentId = audioSegments?.some(
+          (segment) => segment.segmentId === previous?.activeAudioSegmentId
+        )
+          ? previous?.activeAudioSegmentId
+          : undefined;
         const entry: TranscriptEntry = {
           id: data.messageId,
           speaker: "agent",
@@ -137,12 +225,20 @@ export function applyTurnStreamEvent(
           time: formatTime(ts),
           timestampMs: ts,
           phaseKey,
+          ...(audioSegments?.length ? { audioSegments } : {}),
+          ...(activeAudioSegmentId ? { activeAudioSegmentId } : {}),
         };
         if (idx === -1) return [...prev, entry];
         const next = [...prev];
         next[idx] = entry;
         return next;
       });
+      break;
+    }
+    case "agent-audio-segment": {
+      const { data } = envelope as AgentAudioSegmentPayload;
+      ctx.audio.markSegment(data);
+      ctx.setTranscript((prev) => addAudioSegment(prev, data));
       break;
     }
     case "advisory-state": {
@@ -190,15 +286,43 @@ export function applyTurnStreamEvent(
     }
     case "agent-audio-chunk": {
       const { data } = envelope as AgentAudioChunkPayload;
-      ctx.setState("agent-speaking");
       // Stop the filler only after the real audio element has successfully
       // started. The chunk can arrive before the browser begins playback.
-      ctx.audio.enqueue({ chunkBase64: data.audioBase64, encoding: data.encoding }, ctx.stopFiller);
+      void ctx.audio
+        .enqueue(
+          {
+            chunkBase64: data.audioBase64,
+            encoding: data.encoding,
+            messageId: data.messageId,
+            segmentId: data.segmentId,
+            traceId: data.traceId,
+            chunkIndex: data.chunkIndex,
+            sampleRate: data.sampleRate,
+            startSample: data.startSample,
+            sampleCount: data.sampleCount,
+          },
+          {
+            onPlaybackStart: () => {
+              ctx.setState("agent-speaking");
+              ctx.stopFiller?.();
+            },
+          }
+        )
+        .catch((error) => {
+          ctx.setWarning(error instanceof Error ? error.message : "audio_unavailable");
+        });
+      break;
+    }
+    case "agent-audio-segment-done": {
+      const { data } = envelope as AgentAudioSegmentDonePayload;
+      ctx.audio.markSegmentDone(data);
       break;
     }
     case "agent-audio-done": {
       // Queue tự phát hết phần đã enqueue. Lifecycle `state: idle` stops the
       // filler for turns that have no playable audio chunk.
+      const { data } = envelope as AgentAudioDonePayload;
+      ctx.audio.markAudioDone(data.messageId);
       break;
     }
     case "engine-step": {
@@ -211,6 +335,8 @@ export function applyTurnStreamEvent(
     case "error": {
       const { data } = envelope as AgentStreamErrorPayload;
       if (SOFT_WARNING_CODES.has(data.code)) {
+        ctx.audio.markStreamComplete();
+        ctx.stopFiller?.();
         ctx.setWarning(data.code);
         break;
       }

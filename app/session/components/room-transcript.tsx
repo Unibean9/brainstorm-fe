@@ -13,6 +13,32 @@ type RoomTranscriptProps = {
 
 const FEEDBACK_ICONS = [Copy, ThumbsUp, ThumbsDown, MoreHorizontal];
 
+function renderAgentText(entry: TranscriptEntry) {
+  const segment = entry.audioSegments?.find(
+    (candidate) => candidate.segmentId === entry.activeAudioSegmentId
+  );
+  if (
+    !segment ||
+    !segment.textSnapshot ||
+    segment.textStart < 0 ||
+    segment.textEnd <= segment.textStart ||
+    segment.textEnd > entry.text.length ||
+    entry.text.slice(segment.textStart, segment.textEnd) !== segment.textSnapshot
+  ) {
+    return entry.text;
+  }
+
+  return (
+    <>
+      {entry.text.slice(0, segment.textStart)}
+      <mark aria-current="true" className="rounded-[0.2em] bg-[#22d3ee]/18 text-cyan-50">
+        {entry.text.slice(segment.textStart, segment.textEnd)}
+      </mark>
+      {entry.text.slice(segment.textEnd)}
+    </>
+  );
+}
+
 export function RoomTranscript({ entries, activeTimestampMs = 0 }: RoomTranscriptProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const isReplay = activeTimestampMs > 0;
@@ -47,7 +73,7 @@ export function RoomTranscript({ entries, activeTimestampMs = 0 }: RoomTranscrip
                       isActive && "text-white"
                     )}
                   >
-                    {entry.text}
+                    {renderAgentText(entry)}
                   </p>
                   <div className="flex items-center gap-1 text-white/35">
                     {FEEDBACK_ICONS.map((Icon, i) => (

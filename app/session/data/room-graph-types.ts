@@ -1,28 +1,11 @@
 export type RoomGraphNodeType =
-  | "room"
-  | "phase"
-  | "artifact"
-  | "idea"
-  | "technique"
-  | "insight"
-  | "output";
+  "room" | "phase" | "artifact" | "idea" | "technique" | "insight" | "output";
 
 export type RoomGraphLinkType =
-  | "progression"
-  | "contains"
-  | "technique-source"
-  | "evolved-from"
-  | "loop-back";
+  "progression" | "contains" | "technique-source" | "evolved-from" | "loop-back";
 
 export type RoomPhaseKey =
-  | "Framing"
-  | "Context"
-  | "Explore"
-  | "Expand"
-  | "Challenge"
-  | "Insight"
-  | "Decision"
-  | "Action";
+  "Framing" | "Context" | "Explore" | "Expand" | "Challenge" | "Insight" | "Decision" | "Action";
 
 export type TraceEvent = {
   time: string;
@@ -67,6 +50,17 @@ export type TranscriptEntry = {
   time: string;
   timestampMs: number;
   phaseKey?: RoomPhaseKey;
+  /** Ephemeral voice mapping. The complete text remains available to AT and copy actions. */
+  audioSegments?: AudioTextSegment[];
+  activeAudioSegmentId?: string;
+};
+
+export type AudioTextSegment = {
+  segmentId: string;
+  textStart: number;
+  textEnd: number;
+  /** Snapshot used to discard offsets when text-done replaces streamed text. */
+  textSnapshot: string;
 };
 
 export type RoomSessionMeta = {

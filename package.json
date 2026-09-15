@@ -13,6 +13,7 @@
     "type-check": "tsc --noEmit",
     "test:sse": "tsx scripts/test-sse-parser.ts",
     "test:speech": "tsx scripts/test-speech-recognition.ts",
+    "test:audio": "tsx scripts/test-agent-audio-player.ts",
     "validate": "npm run format && npm run lint:fix && npm run type-check"
   },
   "dependencies": {
