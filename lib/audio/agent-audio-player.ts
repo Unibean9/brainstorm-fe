@@ -5,6 +5,10 @@ type AudioChunkInput = {
 };
 
 const AUDIO_LEAD_SECONDS = 0.03;
+// Wait for a small amount of decoded audio before starting. Claude/TTS delivery is bursty:
+// starting on the first sentence makes a later TTS request pause audible. This intentional
+// ~1-second latency gives the scheduler enough jitter buffer to keep speech continuous.
+const INITIAL_BUFFER_SECONDS = 1;
 
 function decodeBase64(base64: string): Uint8Array {
   const binary = atob(base64);
@@ -52,6 +56,10 @@ export class AgentAudioPlayer {
   private generation = 0;
   private pendingDecodes = 0;
   private activeSources = new Set<AudioBufferSourceNode>();
+  private bufferedBuffers: Array<{ buffer: AudioBuffer; onPlaybackStart?: () => void }> = [];
+  private bufferedDuration = 0;
+  private playbackStarted = false;
+  private streamFinished = false;
 
   get isPlaying() {
     return this.playing;
@@ -113,7 +121,9 @@ export class AgentAudioPlayer {
         try {
           const audioBuffer = await context.decodeAudioData(copyToArrayBuffer(bytes));
           if (generation === this.generation) {
-            this.schedule(audioBuffer, context, generation, onPlaybackStart);
+            this.bufferedBuffers.push({ buffer: audioBuffer, onPlaybackStart });
+            this.bufferedDuration += audioBuffer.duration;
+            this.maybeStartPlayback(context, generation);
           }
         } catch {
           // Keep a usable fallback for older browsers/codecs. The normal WAV path uses Web
@@ -137,6 +147,10 @@ export class AgentAudioPlayer {
     this.pendingDecodes = 0;
     this.decodeQueue = Promise.resolve();
     this.nextStartTime = 0;
+    this.bufferedBuffers = [];
+    this.bufferedDuration = 0;
+    this.playbackStarted = false;
+    this.streamFinished = false;
     for (const source of this.activeSources) {
       try {
         source.stop();
@@ -155,7 +169,17 @@ export class AgentAudioPlayer {
   /** Play one complete audio response, replacing anything currently queued. */
   playOnce(chunk: AudioChunkInput): Promise<void> {
     this.stop();
-    return this.enqueue(chunk);
+    const done = this.enqueue(chunk);
+    this.finish();
+    return done;
+  }
+
+  /** Mark the end of a streamed response and flush a short response below the buffer target. */
+  finish() {
+    this.streamFinished = true;
+    const context = this.getAudioContext();
+    if (context) this.maybeStartPlayback(context, this.generation);
+    this.updatePlaying();
   }
 
   private getAudioContext(): AudioContext | null {
@@ -203,6 +227,24 @@ export class AgentAudioPlayer {
         if (generation === this.generation && this.activeSources.has(source)) onPlaybackStart();
       }, delay);
     }
+  }
+
+  private maybeStartPlayback(context: AudioContext, generation: number) {
+    if (generation !== this.generation || this.playbackStarted || !this.bufferedBuffers.length)
+      return;
+    if (!this.streamFinished && this.bufferedDuration < INITIAL_BUFFER_SECONDS) return;
+
+    this.playbackStarted = true;
+    const buffers = this.bufferedBuffers;
+    this.bufferedBuffers = [];
+    this.bufferedDuration = 0;
+    let startedCallbackUsed = false;
+    for (const item of buffers) {
+      const onPlaybackStart = startedCallbackUsed ? undefined : item.onPlaybackStart;
+      if (onPlaybackStart) startedCallbackUsed = true;
+      this.schedule(item.buffer, context, generation, onPlaybackStart);
+    }
+    this.updatePlaying();
   }
 
   private async playWithHtmlAudio(
@@ -256,6 +298,7 @@ export class AgentAudioPlayer {
   }
 
   private updatePlaying() {
-    this.playing = this.pendingDecodes > 0 || this.activeSources.size > 0;
+    this.playing =
+      this.pendingDecodes > 0 || this.activeSources.size > 0 || this.bufferedBuffers.length > 0;
   }
 }

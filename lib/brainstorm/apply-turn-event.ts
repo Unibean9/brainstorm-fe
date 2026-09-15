@@ -197,8 +197,10 @@ export function applyTurnStreamEvent(
       break;
     }
     case "agent-audio-done": {
-      // Queue tự phát hết phần đã enqueue. Lifecycle `state: idle` stops the
-      // filler for turns that have no playable audio chunk.
+      // Cho player biết stream đã kết thúc để flush các câu ngắn hơn ngưỡng prebuffer.
+      // Các chunk đã nhận vẫn được schedule trên cùng một timeline, nên không bị bỏ qua.
+      ctx.audio.finish();
+      // Lifecycle `state: idle` stops the filler for turns that have no playable audio chunk.
       break;
     }
     case "engine-step": {
