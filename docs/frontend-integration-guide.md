@@ -336,28 +336,24 @@ không phải JSON — FE parse SSE phải bỏ qua/đặc-cách event này, đ�
 **Điểm quan trọng nhất cho FE audio player**: với `audioMode: 'streaming'`, `agent-audio-chunk`
 bắt đầu tới **trong lúc**
 `text-delta` vẫn đang chảy, không phải sau `text-done`. Mỗi chunk là 1 file WAV độc lập, hoàn
-chỉnh, đã coalesce ≥0.5s — phát tuần tự theo đúng thứ tự nhận được (không interleave), không
-overlap. Pattern khuyến nghị (đã dùng trong `public/demo.html`):
+chỉnh, đã coalesce tối thiểu `TTS_MIN_CHUNK_SECONDS` (production hiện là 0,25 giây). Player nên
+giải mã chunk bằng Web Audio API và xếp các `AudioBufferSourceNode` nối tiếp trên cùng một
+timeline; không nên đổi `src` của `HTMLAudioElement` sau mỗi chunk vì sẽ tạo khoảng hẫng giữa
+các file. Player hiện tại nằm ở `lib/audio/agent-audio-player.ts` và có fallback cho trình duyệt
+không hỗ trợ Web Audio.
 
 ```js
-let queue = [],
-  playing = false;
-function enqueueAudioChunk(base64) {
-  const url = URL.createObjectURL(base64ToBlob(base64, "audio/wav"));
-  queue.push(url);
-  playNextIfIdle();
-}
-function playNextIfIdle() {
-  if (playing || !queue.length) return;
-  playing = true;
-  const url = queue.shift();
-  audioEl.src = url;
-  audioEl.onended = () => {
-    URL.revokeObjectURL(url);
-    playing = false;
-    playNextIfIdle();
-  };
-  audioEl.play();
+const context = new AudioContext();
+let nextStart = context.currentTime;
+function enqueueAudioChunk(arrayBuffer) {
+  context.decodeAudioData(arrayBuffer).then((buffer) => {
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    source.connect(context.destination);
+    nextStart = Math.max(nextStart, context.currentTime + 0.03);
+    source.start(nextStart);
+    nextStart += buffer.duration;
+  });
 }
 ```
 
