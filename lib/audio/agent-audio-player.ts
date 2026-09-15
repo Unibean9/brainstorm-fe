@@ -99,6 +99,16 @@ export class AgentAudioPlayer {
     return this.unlockPromise;
   }
 
+  /** Start a fresh streamed response while keeping the already-unlocked audio context. */
+  beginStream() {
+    this.bufferedBuffers = [];
+    this.bufferedDuration = 0;
+    this.playbackStarted = false;
+    this.streamFinished = false;
+    this.nextStartTime = 0;
+    this.updatePlaying();
+  }
+
   /** Queue a chunk immediately; decoding is ordered, playback is scheduled ahead of time. */
   enqueue(chunk: AudioChunkInput, onPlaybackStart?: () => void): Promise<void> {
     const generation = this.generation;

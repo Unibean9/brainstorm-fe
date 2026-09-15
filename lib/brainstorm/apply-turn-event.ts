@@ -103,6 +103,7 @@ export function applyTurnStreamEvent(
     }
     case "agent-run-started": {
       const { data, ts } = envelope as AgentRunStartedPayload;
+      ctx.audio.beginStream();
       ctx.setTranscript((prev) => {
         if (prev.some((e) => e.id === data.messageId)) return prev;
         return [
@@ -218,6 +219,7 @@ export function applyTurnStreamEvent(
       }
       // room_busy | turn_failed | client_disconnected — turn coi như kết thúc, cho gửi lại
       ctx.stopFiller?.();
+      ctx.audio.finish();
       ctx.setError(data.code);
       break;
     }
