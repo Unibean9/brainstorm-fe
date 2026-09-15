@@ -37,6 +37,10 @@ export type BrowserSpeechSession = {
 type StartBrowserSpeechOptions = {
   /** Cập nhật transcript tạm trong lúc nói */
   onInterim?: (text: string) => void;
+  /** Báo lỗi ngay cả khi browser kết thúc recognition trước khi người dùng bấm dừng */
+  onError?: (error: Error) => void;
+  /** Browser tự kết thúc recognition (không phải do stop/abort của ứng dụng) */
+  onEnd?: (text: string) => void;
 };
 
 export function startBrowserSpeechRecognition(
@@ -50,10 +54,19 @@ export function startBrowserSpeechRecognition(
   const recognition = new Ctor();
   recognition.lang = "vi-VN";
   recognition.interimResults = true;
-  recognition.continuous = false;
+  // Voice mode is explicitly stopped by the user. With `false`, Chrome ends the
+  // recognition after the first silence and the old UI had no way to observe that
+  // end, leaving the microphone button stuck in "Voice On".
+  recognition.continuous = true;
 
   let latest = "";
-  let rejectRef: ((reason?: unknown) => void) | null = null;
+  let terminalError: Error | null = null;
+  let ended = false;
+  let stopRequested = false;
+  let abortRequested = false;
+  let stopPromise: Promise<string> | null = null;
+  let resolveStop: ((text: string) => void) | null = null;
+  let rejectStop: ((reason?: unknown) => void) | null = null;
 
   recognition.onresult = (event) => {
     latest = Array.from(event.results)
@@ -63,24 +76,61 @@ export function startBrowserSpeechRecognition(
   };
 
   recognition.onerror = (event) => {
-    rejectRef?.(new Error(event.error ?? "speech_recognition_failed"));
+    terminalError = new Error(event.error ?? "speech_recognition_failed");
+    options.onError?.(terminalError);
+    rejectStop?.(terminalError);
+    resolveStop = null;
+    rejectStop = null;
+  };
+
+  recognition.onend = () => {
+    ended = true;
+    const text = latest.trim();
+
+    if (!stopRequested && !abortRequested && !terminalError) {
+      options.onEnd?.(text);
+    }
+
+    if (terminalError) {
+      rejectStop?.(terminalError);
+    } else {
+      resolveStop?.(text);
+    }
+    resolveStop = null;
+    rejectStop = null;
   };
 
   recognition.start();
 
   return {
-    stop: () =>
-      new Promise((resolve, reject) => {
-        rejectRef = reject;
-        recognition.onend = () => {
-          rejectRef = null;
-          resolve(latest.trim());
-        };
-        recognition.stop();
-      }),
+    stop: () => {
+      stopRequested = true;
+      if (stopPromise) return stopPromise;
+      if (terminalError) return Promise.reject(terminalError);
+      if (ended) return Promise.resolve(latest.trim());
+
+      stopPromise = new Promise((resolve, reject) => {
+        resolveStop = resolve;
+        rejectStop = reject;
+        try {
+          recognition.stop();
+        } catch (error) {
+          reject(error);
+          resolveStop = null;
+          rejectStop = null;
+        }
+      });
+      return stopPromise;
+    },
     abort: () => {
-      rejectRef = null;
-      recognition.abort();
+      abortRequested = true;
+      resolveStop = null;
+      rejectStop = null;
+      try {
+        recognition.abort();
+      } catch {
+        // Abort is best-effort during component teardown.
+      }
     },
   };
 }

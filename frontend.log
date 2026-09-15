@@ -1,0 +1,8 @@
+
+> brainstorm-client@0.1.0 start
+> next start -p 5173
+
+▲ Next.js 16.2.9
+- Local:         http://localhost:5173
+- Network:       http://169.254.83.107:5173
+✓ Ready in 449ms

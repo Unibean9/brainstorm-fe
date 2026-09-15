@@ -59,7 +59,11 @@ export async function consumeSseStream(
     const lines = buffer.split("\n");
     buffer = lines.pop() ?? "";
 
-    for (const line of lines) {
+    for (const rawLine of lines) {
+      // SSE permits both LF and CRLF line endings. Some HTTPS proxies normalize the
+      // backend's LF-only stream to CRLF, so remove the optional CR before parsing
+      // fields and event boundaries.
+      const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
       if (line.startsWith(":")) continue;
       if (line === "") {
         flush();

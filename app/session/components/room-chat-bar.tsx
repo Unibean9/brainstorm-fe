@@ -101,6 +101,17 @@ export function RoomChatBar({
         onInterim: (interim) => {
           setValue(mergeDictationText(dictationBaseRef.current, interim));
         },
+        onError: (err) => {
+          dictationRef.current = null;
+          setDictationActive(false);
+          setDictationError(err.message || "Nhận giọng nói thất bại");
+        },
+        onEnd: () => {
+          // Keep the recognized interim/final text in the textarea, but make the
+          // mic available again when Chrome ends recognition on its own.
+          dictationRef.current = null;
+          setDictationActive(false);
+        },
       });
       setDictationActive(true);
     } catch (err) {

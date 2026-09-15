@@ -205,6 +205,9 @@ export function useBrainstormSession({ sessionId, enabled }: UseBrainstormSessio
     startedRef.current = true;
     setError(null);
     setConnectionStatus("connecting");
+    // Unlock browser audio from the Play button's user gesture. TTS chunks arrive
+    // asynchronously over SSE and are otherwise vulnerable to autoplay blocking.
+    void ensureAudio().unlock();
 
     try {
       const snapshot = await loadSessionMutation.mutateAsync(sessionId);
@@ -261,6 +264,9 @@ export function useBrainstormSession({ sessionId, enabled }: UseBrainstormSessio
       if (postTurnMutation.isPending) return;
 
       const clientTurnId = newClientTurnId();
+      // Also unlock on direct chat submission for sessions entered through an
+      // automatic path or when the browser revoked the previous media permission.
+      void ensureAudio().unlock();
       if (options?.optimistic !== false) {
         patchTranscript((prev) => [
           ...prev,
@@ -303,7 +309,28 @@ export function useBrainstormSession({ sessionId, enabled }: UseBrainstormSessio
       setState("listening");
       setError(null);
       try {
-        speechRef.current = startBrowserSpeechRecognition();
+        speechRef.current = startBrowserSpeechRecognition({
+          onError: (err) => {
+            speechRef.current = null;
+            setMicActive(false);
+            setState("idle");
+            setError(err.message || "Nhận giọng nói thất bại");
+          },
+          onEnd: (text) => {
+            // Chrome may end a recognition session on its own. Do not leave the
+            // UI in LISTENING and do not lose a final transcript in that case.
+            speechRef.current = null;
+            setMicActive(false);
+            if (!text) {
+              setState("idle");
+              return;
+            }
+            void submitTurn(text).catch((err) => {
+              setState("idle");
+              setError(err instanceof Error ? err.message : "Gửi giọng nói thất bại");
+            });
+          },
+        });
       } catch (err) {
         setMicActive(false);
         setState("idle");
