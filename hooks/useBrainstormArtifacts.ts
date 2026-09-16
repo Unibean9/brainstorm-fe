@@ -82,7 +82,14 @@ function formatArtifactError(err: unknown) {
 
 function shouldReconcileArtifactError(err: unknown) {
   const parsed = err instanceof BrainstormApiError ? err : parseAxiosApiError(err);
-  return Boolean(parsed.isTimeout || parsed.isNetworkError || parsed.code === "room_busy");
+  // Cloudflare and similar edge proxies can close a long-running request with
+  // 524 even though the origin is still generating the artifact.
+  return Boolean(
+    parsed.isTimeout ||
+      parsed.isNetworkError ||
+      parsed.status === 524 ||
+      parsed.code === "room_busy"
+  );
 }
 
 function metadataUrl(status: BrainstormArtifactStatus | undefined, keys: string[]) {
