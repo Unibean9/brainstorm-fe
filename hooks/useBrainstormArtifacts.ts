@@ -102,6 +102,31 @@ function metadataUrl(status: BrainstormArtifactStatus | undefined, keys: string[
   return undefined;
 }
 
+/** Merge SSE/query snapshots without allowing an older React Query value to hide a newer result. */
+function mergeArtifactStatuses(
+  ...sources: (BrainstormArtifactStatus[] | undefined)[]
+): BrainstormArtifactStatus[] {
+  const result = new Map<ArtifactKey, BrainstormArtifactStatus>();
+  for (const statuses of sources) {
+    for (const status of statuses ?? []) {
+      const current = result.get(status.artifactKey);
+      if (!current) {
+        result.set(status.artifactKey, status);
+        continue;
+      }
+      const currentTime = current.updatedAt ? Date.parse(current.updatedAt) : Number.NaN;
+      const nextTime = status.updatedAt ? Date.parse(status.updatedAt) : Number.NaN;
+      if (
+        Number.isNaN(currentTime) ||
+        (!Number.isNaN(nextTime) && nextTime >= currentTime)
+      ) {
+        result.set(status.artifactKey, status);
+      }
+    }
+  }
+  return [...result.values()];
+}
+
 type UseBrainstormArtifactsOptions = {
   sessionId: string | null;
   sessionStatus?: string | null;
@@ -135,7 +160,7 @@ export function useBrainstormArtifacts({
     enabled: Boolean(sessionId),
     staleTime: 2_000,
     refetchInterval: (query) => {
-      const statuses = query.state.data?.artifacts ?? snapshotArtifacts ?? [];
+      const statuses = mergeArtifactStatuses(snapshotArtifacts, query.state.data?.artifacts);
       const hasGenerating = statuses.some((status) => status.status === "generating");
       const mutationPending =
         prdMutation.isPending || landingMutation.isPending || pitchMutation.isPending;
@@ -145,10 +170,11 @@ export function useBrainstormArtifacts({
 
   // Session lifecycle comes from the server snapshot/list. Local artifact
   // storage can restore URLs, but it must not authorize a new lifecycle state.
-  const isWrapped = sessionStatus === "wrapped";
+  const isWrapped =
+    sessionStatus === "wrapped" || artifactStatusQuery.data?.status === "wrapped";
   const serverStatus = useMemo(() => {
     const result: Partial<Record<ArtifactKey, BrainstormArtifactStatus>> = {};
-    const statuses = artifactStatusQuery.data?.artifacts ?? snapshotArtifacts ?? [];
+    const statuses = mergeArtifactStatuses(snapshotArtifacts, artifactStatusQuery.data?.artifacts);
     for (const status of statuses) result[status.artifactKey] = status;
     return result;
   }, [artifactStatusQuery.data?.artifacts, snapshotArtifacts]);

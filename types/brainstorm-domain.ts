@@ -118,6 +118,7 @@ export type BrainstormArtifactStatus = {
   warnings?: string[];
   error?: string | { code?: string; message?: string };
   outputMetadata?: Record<string, unknown>;
+  updatedAt?: string;
 };
 
 export type DurableOutcomeKind =
