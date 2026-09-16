@@ -152,6 +152,10 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
   // localStorage ngay lúc giáo viên vừa tạo PRD) — bên nào phát hiện trước
   // dùng bên đó, tránh chờ sessionsQuery refetch mới nhận ra vừa wrap xong.
   const isSessionWrapped = sessionStatus === "wrapped" || artifacts.isWrapped;
+  // A wrapped session is a read-only output view. It must not depend on the
+  // live brainstorm connection having started successfully before showing
+  // PRD/Page/Deck actions (especially after a reload).
+  const sessionViewActive = sessionStarted || isSessionWrapped;
   const candidates = useMemo(
     () =>
       (sessionSnapshot?.autonomousJobs ?? [])
@@ -334,7 +338,7 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
       </AnimatePresence>
 
       <AnimatePresence>
-        {sessionStarted ? (
+        {sessionViewActive ? (
           <motion.div
             key="hud"
             className="relative z-40"
