@@ -36,7 +36,7 @@ const BASE = "api/v1/brainstorm/sessions";
 // The browser may be talking through a proxy with a shorter request budget.
 // After this point the hook switches to snapshot reconciliation instead of
 // keeping the artifact controls blocked on one HTTP response.
-const ARTIFACT_REQUEST_TIMEOUT_MS = 240_000;
+const ARTIFACT_REQUEST_TIMEOUT_MS = 1_260_000;
 
 export const brainstormSessionApi = {
   /** Snapshot đầy đủ — dùng để resume sau F5/mất kết nối. Không cần header. */

@@ -23,7 +23,7 @@ import type { BrainstormSessionSnapshot } from "@/types/brainstorm-stream";
 
 const ARTIFACT_KEYS: ArtifactKey[] = ["prd", "landing-page", "pitch-deck"];
 const ARTIFACT_RECOVERY_POLL_MS = 3_000;
-const ARTIFACT_RECOVERY_WINDOW_MS = 15 * 60_000;
+const ARTIFACT_RECOVERY_WINDOW_MS = 20 * 60_000;
 
 const ERROR_COPY: Record<string, string> = {
   invalid_session_id: "Session không hợp lệ.",
