@@ -11,7 +11,7 @@ import { withTeacherHeader } from "@/lib/api/teacher-header";
 import apiService from "../core";
 
 const BASE = "api/v1/brainstorm/rooms";
-const SESSION_START_TIMEOUT_MS = 35_000;
+const SESSION_START_TIMEOUT_MS = 500_000S;
 
 export const roomsApi = {
   /** Header X-Teacher-Id bắt buộc. */
