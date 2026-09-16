@@ -93,7 +93,7 @@ export const brainstormSessionApi = {
   /** Artifact có thể tạo ở mọi phase; backend chỉ từ chối khi turn đang chạy/chưa đủ source. */
   createPrd: async (sessionId: string): Promise<BrainstormPrdResponse> => {
     const response = await apiService.post<ApiResponse<BrainstormPrdResponse>>(
-      `${BASE}/${sessionId}/prd`,
+      `${BASE}/${sessionId}/prd?async=true`,
       {},
       { ...withTeacherHeader(), timeout: ARTIFACT_REQUEST_TIMEOUT_MS }
     );

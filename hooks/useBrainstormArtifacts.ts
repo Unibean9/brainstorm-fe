@@ -270,13 +270,23 @@ export function useBrainstormArtifacts({
 
   const createPrd = useCallback(async () => {
     if (!sessionId || !canGenerate) return;
-    setPrdError(null);
-    setGenerating("prd");
-    try {
-      const data = await prdMutation.mutateAsync({ sessionId });
-      setLocalStatuses((current) => ({
-        ...current,
-        prd: { artifactKey: "prd", status: "ready" },
+      setPrdError(null);
+      setGenerating("prd");
+      try {
+        const data = await prdMutation.mutateAsync({ sessionId });
+        if ("status" in data && data.status === "generating") {
+          const recovered = await recoverArtifact("prd");
+          if (recovered === "ready") return;
+          const message = recovered === "failed"
+            ? ERROR_COPY.prd_failed
+            : TIMEOUT_STILL_PENDING_COPY;
+          setFailed("prd", message);
+          setPrdError(message);
+          return;
+        }
+        setLocalStatuses((current) => ({
+          ...current,
+          prd: { artifactKey: "prd", status: "ready" },
       }));
       persist({ prdUrl: data.prdUrl, prdGeneratedAt: data.generatedAt });
       void downloadArtifactsSequential([{ path: data.prdUrl, filename: "brainstorm-prd.md" }]);

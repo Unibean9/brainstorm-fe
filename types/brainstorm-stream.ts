@@ -209,10 +209,16 @@ export type PostBrainstormTurnRequest = {
   audioMode?: BrainstormAudioMode;
 };
 
-export type BrainstormPrdResponse = {
-  prdUrl: string;
-  generatedAt: string;
-};
+export type BrainstormPrdResponse =
+  | {
+      prdUrl: string;
+      generatedAt: string;
+    }
+  | {
+      sessionId: string;
+      artifactKey: "prd";
+      status: "generating";
+    };
 
 export type BrainstormLandingPageResponse = {
   landingPageUrl: string;
