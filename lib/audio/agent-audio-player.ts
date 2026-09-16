@@ -100,6 +100,7 @@ type TextProgress = {
 
 const LEGACY_SEGMENT_ID = "__legacy__";
 const START_LEAD_SECONDS = 0.1;
+const MIN_START_BUFFER_SECONDS = 0.35;
 const GAP_EPSILON_SECONDS = 0.006;
 
 function nowMs() {
@@ -458,6 +459,7 @@ export class AgentAudioPlayer {
       return;
     }
     if (this.disposed) return;
+    if (!this.hasInitialPlaybackBuffer()) return;
 
     let progressed = true;
     while (progressed) {
@@ -477,6 +479,22 @@ export class AgentAudioPlayer {
       progressed = true;
     }
     this.maybeResolveIdle();
+  }
+
+  /**
+   * Streaming TTS commonly delivers the next chunk after the first one has
+   * already ended. Hold the first source until a small decoded cushion exists
+   * so normal network jitter does not become an audible hole. A short or
+   * completed turn is allowed through immediately.
+   */
+  private hasInitialPlaybackBuffer() {
+    const segment = this.nextSchedulableSegment();
+    if (!segment || segment.baseAudioTime != null || segment.done) return true;
+    const decodedDuration = segment.chunks.reduce(
+      (total, item) => total + (item.decoded?.duration ?? 0),
+      0
+    );
+    return decodedDuration >= MIN_START_BUFFER_SECONDS;
   }
 
   private nextSchedulableSegment() {

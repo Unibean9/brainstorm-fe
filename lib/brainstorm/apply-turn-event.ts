@@ -18,6 +18,9 @@ import type {
   EngineStepChangedPayload,
   AdvisoryStatePayload,
   AdvisoryWarningPayload,
+  ConversationActionErrorPayload,
+  ConversationActionPayload,
+  ConversationActionName,
   FacilitationModeChangedPayload,
   ReasoningState,
   SessionStateChangedPayload,
@@ -129,6 +132,7 @@ export type TurnEventContext = {
   setAdvisory?: (state: ReasoningState | null) => void;
   setAdvisoryWarning?: (code: string | null) => void;
   setAdvisoryDiagnostic?: (diagnostic: string | null) => void;
+  setConversationNotice?: (notice: string | null) => void;
   /** Keep progressive brief/mode metadata in sync while the SSE turn is live. */
   setSnapshot?: (
     updater: (current: BrainstormSessionSnapshot | null) => BrainstormSessionSnapshot | null
@@ -142,6 +146,38 @@ export type TurnEventContext = {
   /** Dừng filler thinking — gọi khi có audio thật đầu tiên, idle, hoặc lỗi */
   stopFiller?: () => void;
 };
+
+function actionNotice(action: ConversationActionName) {
+  switch (action) {
+    case "autonomous_ideation":
+      return "Facilitator đang phát triển thêm các hướng từ cuộc trò chuyện.";
+    case "confirm_brief":
+      return "Đã lưu bối cảnh từ cuộc trò chuyện.";
+    case "accept_candidate":
+      return "Đã ghi nhận hướng bạn chọn vào kết quả.";
+    case "reject_candidate":
+      return "Đã bỏ hướng này khỏi kết quả.";
+    case "complete_session":
+      return "Conversation đã hoàn tất.";
+    case "cancel_autonomous":
+      return "Đã dừng nhánh suy nghĩ thêm.";
+    case "request_artifact":
+      return "Yêu cầu output sẽ được xử lý sau khi conversation hoàn tất.";
+    case "none":
+      return null;
+  }
+}
+
+function isAutonomousJobResult(
+  value: unknown
+): value is NonNullable<BrainstormSessionSnapshot["autonomousJobs"]>[number] {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { jobId?: unknown }).jobId === "string" &&
+    typeof (value as { status?: unknown }).status === "string"
+  );
+}
 
 export function applyTurnStreamEvent(
   event: string,
@@ -269,6 +305,40 @@ export function applyTurnStreamEvent(
       ctx.setAdvisory?.(null);
       ctx.setAdvisoryWarning?.(data.code ?? "private_state_unavailable");
       ctx.setAdvisoryDiagnostic?.(null);
+      break;
+    }
+    case "conversation-action": {
+      const { data } = envelope as ConversationActionPayload;
+      if (data.kind === "clarify") {
+        ctx.setConversationNotice?.("Facilitator đang làm rõ yêu cầu trước khi thực hiện.");
+        break;
+      }
+      if (data.kind !== "executed") {
+        ctx.setConversationNotice?.(null);
+        break;
+      }
+      ctx.setConversationNotice?.(actionNotice(data.action));
+      if (data.action === "complete_session") {
+        ctx.setSnapshot?.((current) => (current ? { ...current, status: "wrapped" } : current));
+      } else if (data.action === "autonomous_ideation") {
+        const job = isAutonomousJobResult(data.result) ? data.result : null;
+        if (!job) break;
+        ctx.setSnapshot?.((current) => {
+          if (!current) return current;
+          const jobs = current.autonomousJobs ?? [];
+          const withoutJob = jobs.filter((item) => item.jobId !== job.jobId);
+          return { ...current, autonomousJobs: [...withoutJob, job] };
+        });
+      }
+      break;
+    }
+    case "conversation-action-error": {
+      const { data } = envelope as ConversationActionErrorPayload;
+      ctx.setConversationNotice?.(
+        data.action === "request_artifact"
+          ? "Output chỉ được tạo sau khi conversation hoàn tất."
+          : "Chưa thể thực hiện yêu cầu này. Bạn có thể tiếp tục nói hoặc chat để làm rõ."
+      );
       break;
     }
     case "facilitation-mode": {

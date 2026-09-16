@@ -20,13 +20,7 @@ export function orbCoreRadius(w: number, h: number, radiusFactor = ORB_RADIUS_FA
 }
 
 /** Soft spoke curve: rim orb → node */
-export function spokeCurvePath(
-  ax: number,
-  ay: number,
-  bx: number,
-  by: number,
-  bend: number
-) {
+export function spokeCurvePath(ax: number, ay: number, bx: number, by: number, bend: number) {
   const mx = (ax + bx) / 2;
   const my = (ay + by) / 2;
   const dx = bx - ax;

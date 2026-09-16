@@ -22,6 +22,8 @@ import type { ArtifactKey, BrainstormArtifactStatus } from "@/types/brainstorm-d
 import type { BrainstormSessionSnapshot } from "@/types/brainstorm-stream";
 
 const ARTIFACT_KEYS: ArtifactKey[] = ["prd", "landing-page", "pitch-deck"];
+const ARTIFACT_RECOVERY_POLL_MS = 3_000;
+const ARTIFACT_RECOVERY_WINDOW_MS = 15 * 60_000;
 
 const ERROR_COPY: Record<string, string> = {
   invalid_session_id: "Session không hợp lệ.",
@@ -42,6 +44,34 @@ const ERROR_COPY: Record<string, string> = {
 const TIMEOUT_STILL_PENDING_COPY =
   "Kết nối bị ngắt trước khi nhận được kết quả, nhưng server có thể vẫn đang xử lý — thử lại sau ít phút.";
 
+function canonicalArtifactUrls(sessionId: string, artifactKey: ArtifactKey) {
+  const base = `/api/v1/brainstorm/sessions/${sessionId}`;
+  if (artifactKey === "prd") return { prdUrl: `${base}/prd` };
+  if (artifactKey === "landing-page") return { landingPageUrl: `${base}/landing-page` };
+  return {
+    pitchDeckHtmlUrl: `${base}/pitch-deck/html`,
+    pitchDeckExportUrl: `${base}/pitch-deck/pdf`,
+  };
+}
+
+async function waitForArtifactState(
+  sessionId: string,
+  artifactKey: ArtifactKey
+): Promise<BrainstormArtifactStatus | null> {
+  const deadline = Date.now() + ARTIFACT_RECOVERY_WINDOW_MS;
+  while (Date.now() < deadline) {
+    try {
+      const snapshot = await brainstormSessionApi.get(sessionId);
+      const status = snapshot.artifacts?.find((item) => item.artifactKey === artifactKey);
+      if (status?.status === "ready" || status?.status === "failed") return status;
+    } catch {
+      // Keep waiting when the status probe itself is temporarily unavailable.
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, ARTIFACT_RECOVERY_POLL_MS));
+  }
+  return null;
+}
+
 function formatArtifactError(err: unknown) {
   if (err instanceof BrainstormApiError) {
     if (err.code && ERROR_COPY[err.code]) return ERROR_COPY[err.code]!;
@@ -50,8 +80,9 @@ function formatArtifactError(err: unknown) {
   return parseAxiosApiError(err).message;
 }
 
-function isTransientError(err: unknown): err is BrainstormApiError {
-  return err instanceof BrainstormApiError && Boolean(err.isTimeout || err.isNetworkError);
+function shouldReconcileArtifactError(err: unknown) {
+  const parsed = err instanceof BrainstormApiError ? err : parseAxiosApiError(err);
+  return Boolean(parsed.isTimeout || parsed.isNetworkError || parsed.code === "room_busy");
 }
 
 function metadataUrl(status: BrainstormArtifactStatus | undefined, keys: string[]) {
@@ -105,7 +136,9 @@ export function useBrainstormArtifacts({
     },
   });
 
-  const isWrapped = sessionStatus === "wrapped" || (!sessionStatus && Boolean(stored?.isWrapped));
+  // Session lifecycle comes from the server snapshot/list. Local artifact
+  // storage can restore URLs, but it must not authorize a new lifecycle state.
+  const isWrapped = sessionStatus === "wrapped";
   const serverStatus = useMemo(() => {
     const result: Partial<Record<ArtifactKey, BrainstormArtifactStatus>> = {};
     const statuses = artifactStatusQuery.data?.artifacts ?? snapshotArtifacts ?? [];
@@ -117,19 +150,32 @@ export function useBrainstormArtifacts({
     const prdStatus = serverStatus.prd;
     const landingStatus = serverStatus["landing-page"];
     const pitchStatus = serverStatus["pitch-deck"];
+    const canonicalPrdUrl = sessionId ? canonicalArtifactUrls(sessionId, "prd").prdUrl : undefined;
+    const canonicalLandingUrl = sessionId
+      ? canonicalArtifactUrls(sessionId, "landing-page").landingPageUrl
+      : undefined;
+    const canonicalPitchUrls = sessionId
+      ? canonicalArtifactUrls(sessionId, "pitch-deck")
+      : undefined;
     return {
-      prdUrl: stored?.prdUrl ?? metadataUrl(prdStatus, ["prdUrl", "url"]),
+      prdUrl:
+        stored?.prdUrl ?? metadataUrl(prdStatus, ["prdUrl", "url"]) ??
+        (prdStatus?.status === "ready" ? canonicalPrdUrl : undefined),
       landingPageUrl:
-        stored?.landingPageUrl ?? metadataUrl(landingStatus, ["landingPageUrl", "url"]),
+        stored?.landingPageUrl ?? metadataUrl(landingStatus, ["landingPageUrl", "url"]) ??
+        (landingStatus?.status === "ready" ? canonicalLandingUrl : undefined),
       pitchDeckHtmlUrl:
         stored?.pitchDeckHtmlUrl ??
-        metadataUrl(pitchStatus, ["htmlUrl", "pitchDeckHtmlUrl", "url"]),
+        metadataUrl(pitchStatus, ["htmlUrl", "pitchDeckHtmlUrl", "url"]) ??
+        (pitchStatus?.status === "ready" ? canonicalPitchUrls?.pitchDeckHtmlUrl : undefined),
       pitchDeckExportUrl:
-        stored?.pitchDeckExportUrl ?? metadataUrl(pitchStatus, ["exportUrl", "pitchDeckExportUrl"]),
+        stored?.pitchDeckExportUrl ??
+        metadataUrl(pitchStatus, ["exportUrl", "pitchDeckExportUrl"]) ??
+        (pitchStatus?.status === "ready" ? canonicalPitchUrls?.pitchDeckExportUrl : undefined),
       speakerScriptUrl:
         stored?.speakerScriptUrl ?? metadataUrl(pitchStatus, ["speakerScriptUrl", "scriptUrl"]),
     };
-  }, [serverStatus, stored]);
+  }, [serverStatus, sessionId, stored]);
 
   const persist = useCallback(
     (next: Partial<StoredSessionArtifacts>) => {
@@ -184,7 +230,7 @@ export function useBrainstormArtifacts({
   const hasServerGenerating = Object.values(serverStatus).some(
     (status) => status?.status === "generating"
   );
-  const canGenerate = Boolean(sessionId) && !isBusy && !hasServerGenerating;
+  const canGenerate = isWrapped && Boolean(sessionId) && !isBusy && !hasServerGenerating;
 
   const setGenerating = useCallback((artifactKey: ArtifactKey) => {
     setLocalStatuses((current) => ({
@@ -200,6 +246,21 @@ export function useBrainstormArtifacts({
     }));
   }, []);
 
+  const recoverArtifact = useCallback(
+    async (artifactKey: ArtifactKey) => {
+      if (!sessionId) return null;
+      const status = await waitForArtifactState(sessionId, artifactKey);
+      if (!status) return null;
+      await artifactStatusQuery.refetch();
+      if (status.status === "ready") {
+        setLocalStatuses((current) => ({ ...current, [artifactKey]: status }));
+        persist(canonicalArtifactUrls(sessionId, artifactKey));
+      }
+      return status.status;
+    },
+    [artifactStatusQuery, persist, sessionId]
+  );
+
   const createPrd = useCallback(async () => {
     if (!sessionId || !canGenerate) return;
     setPrdError(null);
@@ -213,8 +274,15 @@ export function useBrainstormArtifacts({
       persist({ prdUrl: data.prdUrl, prdGeneratedAt: data.generatedAt });
       void downloadArtifactsSequential([{ path: data.prdUrl, filename: "brainstorm-prd.md" }]);
     } catch (err) {
-      void artifactStatusQuery.refetch();
-      if (isTransientError(err)) {
+      if (shouldReconcileArtifactError(err)) {
+        const recovered = await recoverArtifact("prd");
+        if (recovered === "ready") return;
+        if (recovered === "failed") {
+          const message = ERROR_COPY.prd_failed;
+          setFailed("prd", message);
+          setPrdError(message);
+          return;
+        }
         setFailed("prd", TIMEOUT_STILL_PENDING_COPY);
         setPrdError(TIMEOUT_STILL_PENDING_COPY);
         return;
@@ -223,7 +291,7 @@ export function useBrainstormArtifacts({
       setFailed("prd", message);
       setPrdError(message);
     }
-  }, [artifactStatusQuery, canGenerate, persist, prdMutation, sessionId, setFailed, setGenerating]);
+  }, [canGenerate, persist, prdMutation, recoverArtifact, sessionId, setFailed, setGenerating]);
 
   const createLandingPage = useCallback(async () => {
     if (!sessionId || !canGenerate) return;
@@ -244,8 +312,15 @@ export function useBrainstormArtifacts({
         { path: data.landingPageUrl, filename: "landing-page.html" },
       ]);
     } catch (err) {
-      void artifactStatusQuery.refetch();
-      if (isTransientError(err)) {
+      if (shouldReconcileArtifactError(err)) {
+        const recovered = await recoverArtifact("landing-page");
+        if (recovered === "ready") return;
+        if (recovered === "failed") {
+          const message = ERROR_COPY.landing_page_failed;
+          setFailed("landing-page", message);
+          setLandingError(message);
+          return;
+        }
         setFailed("landing-page", TIMEOUT_STILL_PENDING_COPY);
         setLandingError(TIMEOUT_STILL_PENDING_COPY);
         return;
@@ -254,15 +329,7 @@ export function useBrainstormArtifacts({
       setFailed("landing-page", message);
       setLandingError(message);
     }
-  }, [
-    artifactStatusQuery,
-    canGenerate,
-    landingMutation,
-    persist,
-    sessionId,
-    setFailed,
-    setGenerating,
-  ]);
+  }, [canGenerate, landingMutation, persist, recoverArtifact, sessionId, setFailed, setGenerating]);
 
   const createPitchDeck = useCallback(async () => {
     if (!sessionId || !canGenerate) return;
@@ -285,8 +352,15 @@ export function useBrainstormArtifacts({
         { path: data.exportUrl, filename: "pitch-deck.pdf" },
       ]);
     } catch (err) {
-      void artifactStatusQuery.refetch();
-      if (isTransientError(err)) {
+      if (shouldReconcileArtifactError(err)) {
+        const recovered = await recoverArtifact("pitch-deck");
+        if (recovered === "ready") return;
+        if (recovered === "failed") {
+          const message = ERROR_COPY.pitch_deck_failed;
+          setFailed("pitch-deck", message);
+          setPitchError(message);
+          return;
+        }
         setFailed("pitch-deck", TIMEOUT_STILL_PENDING_COPY);
         setPitchError(TIMEOUT_STILL_PENDING_COPY);
         return;
@@ -295,7 +369,7 @@ export function useBrainstormArtifacts({
       setFailed("pitch-deck", message);
       setPitchError(message);
     }
-  }, [artifactStatusQuery, canGenerate, persist, pitchMutation, sessionId, setFailed, setGenerating]);
+  }, [canGenerate, persist, pitchMutation, recoverArtifact, sessionId, setFailed, setGenerating]);
 
   const errors = useMemo(
     () => ({ prd: prdError, "landing-page": landingError, "pitch-deck": pitchError }),
@@ -333,7 +407,11 @@ export function useBrainstormArtifacts({
         : (errors["pitch-deck"] ??
           (localStatuses["pitch-deck"]?.error as string | undefined) ??
           null),
-    prdHint: isBusy ? "Đang xử lý — output sẽ cập nhật khi server hoàn tất." : null,
+    prdHint: !isWrapped
+      ? "Output mở sau khi conversation hoàn tất."
+      : isBusy
+        ? "Đang xử lý — output sẽ cập nhật khi server hoàn tất."
+        : null,
     isPrdPending: prdMutation.isPending || localStatuses.prd?.status === "generating",
     isLandingPending:
       landingMutation.isPending || localStatuses["landing-page"]?.status === "generating",

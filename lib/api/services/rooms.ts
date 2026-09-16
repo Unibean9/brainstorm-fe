@@ -11,6 +11,7 @@ import { withTeacherHeader } from "@/lib/api/teacher-header";
 import apiService from "../core";
 
 const BASE = "api/v1/brainstorm/rooms";
+const SESSION_START_TIMEOUT_MS = 35_000;
 
 export const roomsApi = {
   /** Header X-Teacher-Id bắt buộc. */
@@ -32,7 +33,12 @@ export const roomsApi = {
   ): Promise<BrainstormSessionSnapshot & { roomId: string; name: string }> => {
     const response = await apiService.post<
       ApiResponse<BrainstormSessionSnapshot & { roomId: string; name: string }>
-    >(`${BASE}/${roomId}/sessions`, body, withTeacherHeader());
+    >(`${BASE}/${roomId}/sessions`, body, {
+      ...withTeacherHeader(),
+      // The backend bounds Codex startup at 30s. Keep a small client margin so
+      // a stalled proxy cannot leave the onboarding form disabled indefinitely.
+      timeout: SESSION_START_TIMEOUT_MS,
+    });
     return response.data.data;
   },
 

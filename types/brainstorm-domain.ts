@@ -146,7 +146,13 @@ export type AutonomousJobStatus =
 
 export type AutonomousIdeationCandidate = {
   candidateId: string;
-  content: unknown;
+  jobId?: string;
+  sessionId?: string;
+  source?: string;
+  ordinal?: number;
+  text?: string;
+  rationale?: string;
+  content?: unknown;
   status: "pending" | "accepted" | "rejected" | string;
   kind?: DurableOutcomeKind;
   createdAt?: string;
@@ -161,6 +167,7 @@ export type AutonomousIdeationJob = {
   error?: { code?: string; message?: string } | string;
   createdAt?: string;
   completedAt?: string;
+  candidates?: AutonomousIdeationCandidate[];
 };
 
 export type RoomSessionSummary = {

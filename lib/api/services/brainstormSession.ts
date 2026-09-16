@@ -29,16 +29,14 @@ import apiService from "../core";
 const BASE = "api/v1/brainstorm/sessions";
 
 /**
- * landing-page / pitch-deck: server bound tối đa 15 phút (ARTIFACT_DEADLINE_MS, retry
- * brief+lint tới 3 lần + đo layout Puppeteer). Client timeout phải dài hơn ngân sách
- * backend một khoảng an toàn — đặt bằng nhau tuyệt đối nghĩa là gần như không có margin,
- * bất kỳ độ trễ mạng/proxy nào cũng đủ khiến client timeout ngay trước/đúng lúc backend xong.
+ * Artifact routes may run for up to 15 minutes on the server (including retries and
+ * layout measurement). The request is intentionally bounded below that ceiling so a
+ * proxy disconnect hands control to snapshot reconciliation instead of trapping the UI.
  */
-const ARTIFACT_BACKEND_BUDGET_MS = 15 * 60_000;
-const ARTIFACT_GENERATION_TIMEOUT_MS = ARTIFACT_BACKEND_BUDGET_MS + 80_000;
-
-/** PRD không có deadline constant tường minh ở backend — dùng cùng ngân sách client để không cắt sớm hơn landing/deck. */
-const PRD_GENERATION_TIMEOUT_MS = ARTIFACT_GENERATION_TIMEOUT_MS;
+// The browser may be talking through a proxy with a shorter request budget.
+// After this point the hook switches to snapshot reconciliation instead of
+// keeping the artifact controls blocked on one HTTP response.
+const ARTIFACT_REQUEST_TIMEOUT_MS = 240_000;
 
 export const brainstormSessionApi = {
   /** Snapshot đầy đủ — dùng để resume sau F5/mất kết nối. Không cần header. */
@@ -97,7 +95,7 @@ export const brainstormSessionApi = {
     const response = await apiService.post<ApiResponse<BrainstormPrdResponse>>(
       `${BASE}/${sessionId}/prd`,
       {},
-      { ...withTeacherHeader(), timeout: PRD_GENERATION_TIMEOUT_MS }
+      { ...withTeacherHeader(), timeout: ARTIFACT_REQUEST_TIMEOUT_MS }
     );
     return response.data.data;
   },
@@ -107,7 +105,7 @@ export const brainstormSessionApi = {
     const response = await apiService.post<ApiResponse<BrainstormLandingPageResponse>>(
       `${BASE}/${sessionId}/landing-page`,
       {},
-      { ...withTeacherHeader(), timeout: ARTIFACT_GENERATION_TIMEOUT_MS }
+      { ...withTeacherHeader(), timeout: ARTIFACT_REQUEST_TIMEOUT_MS }
     );
     return response.data.data;
   },
@@ -117,7 +115,7 @@ export const brainstormSessionApi = {
     const response = await apiService.post<ApiResponse<BrainstormPitchDeckResponse>>(
       `${BASE}/${sessionId}/pitch-deck`,
       undefined,
-      { ...withTeacherHeader(), timeout: ARTIFACT_GENERATION_TIMEOUT_MS }
+      { ...withTeacherHeader(), timeout: ARTIFACT_REQUEST_TIMEOUT_MS }
     );
     return response.data.data;
   },

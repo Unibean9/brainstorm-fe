@@ -19,35 +19,21 @@ type FillerWithMetadata = BrainstormFillerAsset & {
   lang?: FillerLanguage | null;
 };
 
-/** Chỉ chọn filler đúng voice; thiếu metadata thì không phát để tránh lẫn giọng. */
-function pickFiller(
+/** Chỉ chọn filler đúng language, voice và phase; thiếu metadata thì không phát. */
+export function pickFiller(
   fillers: FillerWithMetadata[],
   phaseKey: BrainstormPhaseKey | null,
   voiceId: string | null,
   language: FillerLanguage | null
 ) {
   if (!fillers.length || !voiceId) return null;
+  if (!language) return null;
 
-  const byVoicePhaseLanguage = fillers.filter(
-    (f) =>
-      f.voiceId === voiceId &&
-      (!phaseKey || f.phase === phaseKey) &&
-      (!language || f.lang === language)
-  );
-  const byVoicePhaseLegacy = fillers.filter(
-    (f) => f.voiceId === voiceId && (!phaseKey || f.phase === phaseKey) && f.lang == null
-  );
-  const byVoiceLanguage = fillers.filter(
-    (f) => f.voiceId === voiceId && (!language || f.lang === language)
-  );
-  const byVoice = fillers.filter((f) => f.voiceId === voiceId);
-  const pool = byVoicePhaseLanguage.length
-    ? byVoicePhaseLanguage
-    : byVoicePhaseLegacy.length
-      ? byVoicePhaseLegacy
-      : byVoiceLanguage.length
-        ? byVoiceLanguage
-        : byVoice;
+  const byVoiceLanguage = fillers.filter((f) => f.voiceId === voiceId && f.lang === language);
+  if (!byVoiceLanguage.length) return null;
+
+  const byVoicePhaseLanguage = byVoiceLanguage.filter((f) => !phaseKey || f.phase === phaseKey);
+  const pool = byVoicePhaseLanguage.length ? byVoicePhaseLanguage : byVoiceLanguage;
 
   if (!pool.length) return null;
 

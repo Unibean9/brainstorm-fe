@@ -120,7 +120,7 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
     snapshot: sessionSnapshot,
     advisory,
     advisoryWarning,
-    advisoryDiagnostic,
+    conversationNotice,
     fillerActive,
     isTurnPending,
     startSession: connectBrainstorm,
@@ -138,7 +138,7 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
 
   const sessionStatus = locallyCompleted
     ? "wrapped"
-    : (currentSession?.status ?? sessionSnapshot?.status ?? null);
+    : (sessionSnapshot?.status ?? currentSession?.status ?? null);
 
   const artifacts = useBrainstormArtifacts({
     sessionId,
@@ -152,6 +152,13 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
   // localStorage ngay lúc giáo viên vừa tạo PRD) — bên nào phát hiện trước
   // dùng bên đó, tránh chờ sessionsQuery refetch mới nhận ra vừa wrap xong.
   const isSessionWrapped = sessionStatus === "wrapped" || artifacts.isWrapped;
+  const candidates = useMemo(
+    () =>
+      (sessionSnapshot?.autonomousJobs ?? [])
+        .flatMap((job) => job.candidates ?? [])
+        .filter((candidate) => candidate.status !== "cancelled"),
+    [sessionSnapshot?.autonomousJobs]
+  );
 
   useEffect(() => {
     const el = rootRef.current;
@@ -285,7 +292,7 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
   const motionOff = !!reduceMotion;
   const fade = motionOff ? { duration: 0 } : FADE;
   const orbHit = Math.max(72, layout.coreR * 2.2);
-  const chatBusy = artifacts.isWrapped || state === "processing" || state === "agent-speaking";
+  const chatBusy = isSessionWrapped || state === "processing" || state === "agent-speaking";
 
   const closeChat = useCallback(() => {
     setChatOpen(false);
@@ -347,10 +354,10 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
               isWrapped={isSessionWrapped}
               advisory={advisory}
               advisoryWarning={advisoryWarning}
-              advisoryDiagnostic={advisoryDiagnostic}
+              conversationNotice={conversationNotice}
             />
             <RoomArtifactActions
-              isWrapped={artifacts.isWrapped}
+              isWrapped={isSessionWrapped}
               canGeneratePrd={artifacts.canGeneratePrd}
               canGenerateLanding={artifacts.canGenerateLanding}
               canGeneratePitch={artifacts.canGeneratePitch}
@@ -412,6 +419,7 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
                 <div
                   key={node.id}
                   className="pointer-events-none absolute z-20"
+                  aria-hidden="true"
                   style={{
                     left: `${node.leftPct}%`,
                     top: `${node.topPct}%`,
@@ -419,7 +427,7 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
                     opacity: status === "upcoming" ? 0.42 : 1,
                   }}
                 >
-                  <div className={cn("flex flex-col items-center", docked ? "gap-1.5" : "gap-2")}>
+                  <div className="flex flex-col items-center">
                     <motion.span
                       className={cn(
                         "relative block rounded-full",
@@ -470,15 +478,6 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
                         />
                       ) : null}
                     </motion.span>
-                    <span
-                      className={cn(
-                        "relative z-10 whitespace-nowrap font-medium tracking-wide",
-                        active ? "text-white" : done ? "text-amber-200/90" : "text-white/55",
-                        docked ? "text-[11px] sm:text-xs" : "text-xs sm:text-[13px]"
-                      )}
-                    >
-                      {node.label}
-                    </span>
                   </div>
                 </div>
               );
@@ -503,7 +502,7 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
 
       <AnimatePresence>
         {sessionStarted && chatOpen ? (
-          <RoomSessionChat key="session-chat" entries={transcript} />
+          <RoomSessionChat key="session-chat" entries={transcript} candidates={candidates} />
         ) : null}
       </AnimatePresence>
 

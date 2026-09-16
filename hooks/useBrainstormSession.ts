@@ -112,6 +112,7 @@ export function useBrainstormSession({ sessionId, enabled }: UseBrainstormSessio
   const [advisory, setAdvisory] = useState<ReasoningState | null>(null);
   const [advisoryWarning, setAdvisoryWarning] = useState<string | null>(null);
   const [advisoryDiagnostic, setAdvisoryDiagnostic] = useState<string | null>(null);
+  const [conversationNotice, setConversationNotice] = useState<string | null>(null);
 
   const audioRef = useRef<AgentAudioPlayer | null>(null);
   const speechRef = useRef<BrowserSpeechSession | null>(null);
@@ -218,6 +219,40 @@ export function useBrainstormSession({ sessionId, enabled }: UseBrainstormSessio
     [queryClient, sessionId]
   );
 
+  const hasPendingAutonomousJob = Boolean(
+    snapshot?.autonomousJobs?.some((job) => job.status === "queued" || job.status === "running")
+  );
+
+  useEffect(() => {
+    if (!enabled || !hasPendingAutonomousJob) return;
+    let cancelled = false;
+
+    const refreshJobs = async () => {
+      try {
+        const next = await brainstormSessionApi.get(sessionId);
+        if (cancelled) return;
+        applySnapshotToUi(next, {
+          setEngineStep,
+          setState,
+          setSessionPhaseKey,
+          setVoiceId,
+          setLanguage,
+        });
+        setSnapshot(next);
+        hydrateBrainstormSessionCache(queryClient, next);
+      } catch {
+        // The next interval/reconnect can recover the job state; keep chat available.
+      }
+    };
+
+    void refreshJobs();
+    const interval = window.setInterval(() => void refreshJobs(), 1_500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [enabled, hasPendingAutonomousJob, queryClient, sessionId]);
+
   const runTurnStream = useCallback(
     async (body: Parameters<typeof brainstormSessionApi.postTurnStream>[1]) => {
       // abort() chỉ ngắt kết nối SSE phía client — từ bản refactor turn-runner,
@@ -269,6 +304,7 @@ export function useBrainstormSession({ sessionId, enabled }: UseBrainstormSessio
           setAdvisory,
           setAdvisoryWarning,
           setAdvisoryDiagnostic,
+          setConversationNotice,
           setSnapshot,
           setError,
           setWarning,
@@ -456,6 +492,7 @@ export function useBrainstormSession({ sessionId, enabled }: UseBrainstormSessio
       setAdvisory(null);
       setAdvisoryWarning(null);
       setAdvisoryDiagnostic(null);
+      setConversationNotice(null);
       setFillerActive(true);
 
       await postTurnMutation.mutateAsync({
@@ -552,6 +589,7 @@ export function useBrainstormSession({ sessionId, enabled }: UseBrainstormSessio
     advisory,
     advisoryWarning,
     advisoryDiagnostic,
+    conversationNotice,
     fillerActive,
     isTurnPending: postTurnMutation.isPending,
     startSession,

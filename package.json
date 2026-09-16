@@ -14,6 +14,8 @@
     "test:sse": "tsx scripts/test-sse-parser.ts",
     "test:speech": "tsx scripts/test-speech-recognition.ts",
     "test:audio": "tsx scripts/test-agent-audio-player.ts",
+    "test:filler": "tsx scripts/test-filler-selection.ts",
+    "test:conversation-actions": "tsx scripts/test-conversation-actions.ts",
     "validate": "npm run format && npm run lint:fix && npm run type-check"
   },
   "dependencies": {

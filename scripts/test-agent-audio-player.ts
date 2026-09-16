@@ -221,6 +221,39 @@ async function testCancellationAndStaleCallbacks() {
   assert.equal(player.isPlaying, false);
 }
 
+async function testInitialStreamingBufferPreventsFirstChunkUnderrun() {
+  const contexts = installFakeAudioContext();
+  const player = new AgentAudioPlayer();
+  player.beginTurn("buffered");
+  player.markSegment({ messageId: "buffered", segmentId: "seg" });
+  const first = player.enqueue({
+    chunkBase64: "AA==",
+    encoding: "audio/wav",
+    messageId: "buffered",
+    segmentId: "seg",
+    chunkIndex: 0,
+  });
+  contexts[0]!.resolveDecode(0.25);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(contexts[0]!.sources.length, 0, "the first short chunk should wait for a decoded cushion");
+
+  const second = player.enqueue({
+    chunkBase64: "AA==",
+    encoding: "audio/wav",
+    messageId: "buffered",
+    segmentId: "seg",
+    chunkIndex: 1,
+  });
+  contexts[0]!.resolveDecode(0.25);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(contexts[0]!.sources.length, 2, "the scheduler should start once the cushion is ready");
+
+  player.markSegmentDone({ messageId: "buffered", segmentId: "seg" });
+  player.markAudioDone("buffered");
+  for (const source of contexts[0]!.sources) source.end();
+  await Promise.all([first, second, player.whenIdle()]);
+}
+
 async function testDecodeErrorIsObservable() {
   const contexts = installFakeAudioContext();
   const errors: string[] = [];
@@ -292,6 +325,7 @@ async function testFinalTextKeepsFullTranscriptAndRejectsMismatchedOffsets() {
 
 async function main() {
   await testOutOfOrderDecodeAndContiguity();
+  await testInitialStreamingBufferPreventsFirstChunkUnderrun();
   await testCancellationAndStaleCallbacks();
   await testDecodeErrorIsObservable();
   await testFinalTextKeepsFullTranscriptAndRejectsMismatchedOffsets();

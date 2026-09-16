@@ -52,6 +52,7 @@ type SessionStatusHudProps = {
   advisory?: ReasoningState | null;
   advisoryWarning?: string | null;
   advisoryDiagnostic?: string | null;
+  conversationNotice?: string | null;
 };
 
 export function SessionStatusHud({
@@ -66,7 +67,7 @@ export function SessionStatusHud({
   sessionTools,
   advisory,
   advisoryWarning,
-  advisoryDiagnostic,
+  conversationNotice,
 }: SessionStatusHudProps) {
   const [now, setNow] = useState(() => new Date());
   const [weather, setWeather] = useState<WeatherInfo>({
@@ -282,17 +283,14 @@ export function SessionStatusHud({
         </div>
       </div>
 
-      {advisory || advisoryWarning ? (
-        <p
-          className="mt-2 max-w-[26rem] truncate text-[10px] leading-relaxed text-white/42"
-          title={advisoryWarning ?? advisoryDiagnostic ?? advisory?.diagnosis}
-        >
-          <span className="font-semibold tracking-[0.12em] text-[#67e8f9]/70">ADVISORY</span>
+      {conversationNotice || advisory || advisoryWarning ? (
+        <p className="mt-2 max-w-[26rem] truncate text-[10px] leading-relaxed text-white/42">
+          <span className="font-semibold tracking-[0.12em] text-[#67e8f9]/70">FACILITATOR</span>
           <span className="mx-1.5 text-white/20">·</span>
-          {advisoryWarning
-            ? "Private state chưa sẵn sàng — turn vẫn tiếp tục"
-            : [advisory?.stage, advisory?.technique, advisory?.move].filter(Boolean).join(" · ") ||
-              "Đang cập nhật"}
+          {conversationNotice ??
+            (advisoryWarning
+              ? "Vẫn đang tiếp tục cuộc trò chuyện"
+              : "Đang điều chỉnh cách hỗ trợ theo cuộc trò chuyện")}
         </p>
       ) : null}
 

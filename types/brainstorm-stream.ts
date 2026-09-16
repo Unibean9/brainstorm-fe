@@ -97,6 +97,31 @@ export type AdvisoryWarningPayload = StreamEnvelope<{
   recoverable: true;
 }>;
 
+export type ConversationActionName =
+  | "none"
+  | "autonomous_ideation"
+  | "confirm_brief"
+  | "accept_candidate"
+  | "reject_candidate"
+  | "request_artifact"
+  | "complete_session"
+  | "cancel_autonomous";
+
+export type ConversationActionPayload = StreamEnvelope<
+  | { kind: "none" }
+  | { kind: "clarify"; reason: string }
+  | {
+      kind: "executed";
+      action: Exclude<ConversationActionName, "none">;
+      result: unknown;
+    }
+>;
+
+export type ConversationActionErrorPayload = StreamEnvelope<{
+  action: ConversationActionName;
+  code: string;
+}>;
+
 export type AgentAudioChunkPayload = StreamEnvelope<{
   messageId: string;
   encoding: "audio/wav";

@@ -5,9 +5,12 @@ import { motion, useReducedMotion } from "motion/react";
 import { cn } from "@/lib/utils";
 import type { TranscriptEntry } from "../data/room-graph-types";
 import { RoomTranscript } from "./room-transcript";
+import { RoomSessionCandidates } from "./room-session-candidates";
+import type { AutonomousIdeationCandidate } from "@/types/brainstorm-domain";
 
 type RoomSessionChatProps = {
   entries: TranscriptEntry[];
+  candidates?: AutonomousIdeationCandidate[];
 };
 
 const PANEL = { duration: 0.72, ease: [0.16, 1, 0.3, 1] as const };
@@ -16,8 +19,7 @@ const PANEL = { duration: 0.72, ease: [0.16, 1, 0.3, 1] as const };
 export const CHAT_STAGE_GRID =
   "grid w-full grid-cols-[13.5rem_minmax(0,1fr)_minmax(10rem,34%)] gap-3 px-4 sm:grid-cols-[14rem_minmax(0,1fr)_minmax(12rem,36%)] sm:gap-4 sm:px-5";
 
-export const CHAT_STAGE_COLUMN =
-  "min-w-0 px-2 sm:px-4";
+export const CHAT_STAGE_COLUMN = "min-w-0 px-2 sm:px-4";
 
 export const CHAT_STAGE_INNER = "mx-auto w-full max-w-lg sm:max-w-xl lg:max-w-2xl";
 
@@ -26,7 +28,7 @@ export const CHAT_STAGE_INNER = "mx-auto w-full max-w-lg sm:max-w-xl lg:max-w-2x
  * chat đóng/mở) · chừa chỗ orb ở giữa (orb đứng yên tại vị trí home) · khung
  * chat phải. Input nằm ở dock dưới (RoomChatBar).
  */
-export function RoomSessionChat({ entries }: RoomSessionChatProps) {
+export function RoomSessionChat({ entries, candidates = [] }: RoomSessionChatProps) {
   const reduceMotion = useReducedMotion();
   const t = reduceMotion ? { duration: 0 } : PANEL;
 
@@ -57,6 +59,7 @@ export function RoomSessionChat({ entries }: RoomSessionChatProps) {
               FACILITATOR
             </p>
             <RoomTranscript entries={entries} />
+            <RoomSessionCandidates candidates={candidates} />
           </div>
         </div>
       </motion.div>

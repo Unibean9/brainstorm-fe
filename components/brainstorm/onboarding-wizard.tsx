@@ -60,8 +60,18 @@ const FIELD_ERROR_COPY: Record<string, string> = {
   invalid_brief: "Brief chưa đúng định dạng — kiểm tra lại các trường đã nhập.",
 };
 
+function formatSessionStartError(error: unknown): string {
+  const apiErr = parseAxiosApiError(error);
+  if (apiErr.code && FIELD_ERROR_COPY[apiErr.code]) return FIELD_ERROR_COPY[apiErr.code];
+  if (apiErr.isTimeout || apiErr.isNetworkError) {
+    return "Kết nối tới runtime bị gián đoạn. Bạn có thể thử lại mà không mất chủ đề.";
+  }
+  return "Chưa thể khởi động session. Kiểm tra Codex/auth rồi thử lại.";
+}
+
 const FALLBACK_RUNTIME_PROVIDERS: { providerId: RuntimeProvider; label: string }[] = [
-  { providerId: "claude", label: "Claude" },
+  // Temporarily hidden from the UI; keep the backend/runtime contract for existing rooms.
+  // { providerId: "claude", label: "Claude" },
   { providerId: "codex", label: "Codex" },
 ];
 
@@ -69,6 +79,14 @@ const FALLBACK_LANGUAGES: { languageId: BrainstormLanguage; label: string }[] = 
   { languageId: "vi", label: "Tiếng Việt" },
   { languageId: "en", label: "English" },
 ];
+
+// Backend currently exposes these three stable voice ids. Keep this UI-only
+// compatibility map while the public voice endpoint remains language-agnostic.
+const VOICE_LANGUAGE: Record<string, BrainstormLanguage> = {
+  "vi-female-01": "vi",
+  "vi-male-01": "vi",
+  "en-male-01": "en",
+};
 
 function StepNode({
   id,
@@ -276,7 +294,7 @@ export function OnboardingWizard() {
   const [roomName, setRoomName] = useState("");
   const [sessionTopic, setSessionTopic] = useState("");
   const [selectedVoiceId, setSelectedVoiceId] = useState<string | null>(null);
-  const [selectedRuntimeProvider, setSelectedRuntimeProvider] = useState<RuntimeProvider>("claude");
+  const [selectedRuntimeProvider, setSelectedRuntimeProvider] = useState<RuntimeProvider>("codex");
   const [selectedLanguage, setSelectedLanguage] = useState<BrainstormLanguage>("vi");
   const [stepError, setStepError] = useState<string | null>(null);
   const [pendingCode, setPendingCode] = useState<string | null>(null);
@@ -333,13 +351,18 @@ export function OnboardingWizard() {
     staleTime: Infinity,
   });
 
-  // selectedVoiceId chưa từng set thủ công (null) → mặc định về preset đầu tiên,
-  // tính lại ngay trong render thay vì setState trong effect (tránh cascading render).
-  const effectiveVoiceId = selectedVoiceId ?? voicesQuery.data?.[0]?.voiceId ?? null;
-  const runtimeProviderOptions = runtimeProvidersQuery.data?.length
-    ? runtimeProvidersQuery.data
+  const codexProviderOptions =
+    runtimeProvidersQuery.data?.filter((provider) => provider.providerId === "codex") ?? [];
+  const runtimeProviderOptions = codexProviderOptions.length
+    ? codexProviderOptions
     : FALLBACK_RUNTIME_PROVIDERS;
   const languageOptions = languagesQuery.data?.length ? languagesQuery.data : FALLBACK_LANGUAGES;
+  const compatibleVoiceOptions = (voicesQuery.data ?? []).filter(
+    (voice) => VOICE_LANGUAGE[voice.voiceId] === selectedLanguage
+  );
+  const effectiveVoiceId = compatibleVoiceOptions.some((voice) => voice.voiceId === selectedVoiceId)
+    ? selectedVoiceId
+    : (compatibleVoiceOptions[0]?.voiceId ?? null);
 
   const registerTeacherMutation = useMutation({
     mutationFn: teachersApi.register,
@@ -394,8 +417,7 @@ export function OnboardingWizard() {
       );
     },
     onError: (err) => {
-      const apiErr = parseAxiosApiError(err);
-      setStepError((apiErr.code && FIELD_ERROR_COPY[apiErr.code]) || apiErr.message);
+      setStepError(formatSessionStartError(err));
     },
   });
 
@@ -610,9 +632,7 @@ export function OnboardingWizard() {
                             }
                             onClick={() => {
                               setSelectedRoom(room);
-                              setSelectedRuntimeProvider(
-                                room.runtimeProvider ?? room.agent ?? "claude"
-                              );
+                              setSelectedRuntimeProvider("codex");
                               setManualStep(3);
                             }}
                           />
@@ -764,7 +784,7 @@ export function OnboardingWizard() {
                             GIỌNG ĐỌC
                           </Label>
                           <div className="flex gap-2">
-                            {(voicesQuery.data ?? []).map((voice) => (
+                            {compatibleVoiceOptions.map((voice) => (
                               <button
                                 key={voice.voiceId}
                                 type="button"
