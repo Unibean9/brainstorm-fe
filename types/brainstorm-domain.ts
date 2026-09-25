@@ -27,6 +27,8 @@ export type Room = {
   createdAt: string;
   /** Canonical runtime provider pinned at room level. */
   runtimeProvider: RuntimeProvider;
+  /** Supportive mode pinned at room level: ~6-turn bounded sessions that auto-wrap. */
+  supportiveMode?: boolean;
   /** Compatibility alias returned by older backend snapshots. */
   agent?: BrainstormAgent;
 };
@@ -34,6 +36,8 @@ export type Room = {
 export type CreateRoomRequest = {
   name: string;
   runtimeProvider?: RuntimeProvider;
+  /** Pinned at creation. Omitted → backend pins its env default. */
+  supportiveMode?: boolean;
   /** Compatibility alias for older clients. */
   agent?: BrainstormAgent;
 };

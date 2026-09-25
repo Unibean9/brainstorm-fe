@@ -187,6 +187,9 @@ export type BrainstormSessionSnapshot = {
   language?: BrainstormLanguage;
   facilitationMode?: FacilitationMode;
   modeRevision?: number;
+  /** Pinned by the Room: bounded session that auto-wraps after `supportiveTurnLimit` user turns. */
+  supportiveMode?: boolean;
+  supportiveTurnLimit?: number | null;
   seed?: SessionSeed | null;
   workingBrief?: WorkingBrief | null;
   briefStatus?: BriefStatus;

@@ -156,6 +156,16 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
   // live brainstorm connection having started successfully before showing
   // PRD/Page/Deck actions (especially after a reload).
   const sessionViewActive = sessionStarted || isSessionWrapped;
+  const supportiveTurnLimit = sessionSnapshot?.supportiveMode
+    ? (sessionSnapshot.supportiveTurnLimit ?? null)
+    : null;
+  const userTurnCount = useMemo(
+    () => transcript.filter((entry) => entry.speaker === "user").length,
+    [transcript]
+  );
+  const turnBudget = supportiveTurnLimit
+    ? { used: userTurnCount, limit: supportiveTurnLimit }
+    : null;
   const candidates = useMemo(
     () =>
       (sessionSnapshot?.autonomousJobs ?? [])
@@ -337,29 +347,66 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
         ) : null}
       </AnimatePresence>
 
+      {/* Left column: the phase rail flows under the HUD instead of sitting at a fixed
+          offset, so a taller HUD (notice line, thinking-sound toggle) pushes it down
+          rather than overlapping it. */}
+      <div className="pointer-events-none absolute left-4 top-4 z-40 flex w-[min(92vw,420px)] flex-col gap-7 sm:left-6 sm:top-5 sm:w-[440px]">
+        <AnimatePresence>
+          {sessionViewActive ? (
+            <motion.div
+              key="hud"
+              initial={motionOff ? false : { opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ ...fade, delay: motionOff ? 0 : 0.15 }}
+            >
+              <SessionStatusHud
+                state={state}
+                micActive={micActive}
+                fillerEnabled={fillerThinking.fillerEnabled}
+                onFillerEnabledChange={fillerThinking.setFillerEnabled}
+                roomName={roomName}
+                sessionName={currentSessionName}
+                onSwitchRoom={switchRoom}
+                isWrapped={isSessionWrapped}
+                advisory={advisory}
+                advisoryWarning={advisoryWarning}
+                conversationNotice={conversationNotice}
+              />
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {sessionStarted || isSessionWrapped ? (
+            <motion.div
+              key="phase-rail"
+              className="pointer-events-auto self-start"
+              initial={motionOff ? false : { opacity: 0, x: -16 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ ...fade, delay: motionOff ? 0 : 0.22 }}
+            >
+              <RoomPhaseRail
+                phaseKey={sessionPhaseKey}
+                completed={isSessionWrapped}
+                turnBudget={turnBudget}
+              />
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+      </div>
+
       <AnimatePresence>
         {sessionViewActive ? (
           <motion.div
-            key="hud"
+            key="artifacts"
             className="relative z-40"
             initial={motionOff ? false : { opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ ...fade, delay: motionOff ? 0 : 0.15 }}
           >
-            <SessionStatusHud
-              state={state}
-              micActive={micActive}
-              fillerEnabled={fillerThinking.fillerEnabled}
-              onFillerEnabledChange={fillerThinking.setFillerEnabled}
-              roomName={roomName}
-              sessionName={currentSessionName}
-              onSwitchRoom={switchRoom}
-              isWrapped={isSessionWrapped}
-              advisory={advisory}
-              advisoryWarning={advisoryWarning}
-              conversationNotice={conversationNotice}
-            />
             <RoomArtifactActions
               isWrapped={isSessionWrapped}
               canGeneratePrd={artifacts.canGeneratePrd}
@@ -369,10 +416,8 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
               landingPageUrl={artifacts.landingPageUrl}
               landingWarnings={artifacts.landingWarnings}
               pitchDeckHtmlUrl={artifacts.pitchDeckHtmlUrl}
-              pitchDeckExportUrl={artifacts.pitchDeckExportUrl}
-              speakerScriptUrl={artifacts.speakerScriptUrl}
               pitchWarnings={artifacts.pitchWarnings}
-              prdHint={artifacts.prdHint}
+              blockedReason={artifacts.blockedReason}
               prdError={artifacts.prdError}
               landingError={artifacts.landingError}
               pitchError={artifacts.pitchError}
@@ -487,21 +532,6 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
               );
             })
           : null}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {sessionStarted ? (
-          <motion.div
-            key="phase-rail"
-            className="pointer-events-auto absolute left-4 top-72 z-30 sm:left-5 sm:top-64 lg:top-60"
-            initial={motionOff ? false : { opacity: 0, x: -16 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0 }}
-            transition={{ ...fade, delay: motionOff ? 0 : 0.22 }}
-          >
-            <RoomPhaseRail phaseKey={sessionPhaseKey} />
-          </motion.div>
-        ) : null}
       </AnimatePresence>
 
       <AnimatePresence>

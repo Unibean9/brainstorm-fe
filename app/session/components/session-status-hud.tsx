@@ -140,7 +140,7 @@ export function SessionStatusHud({
 
   return (
     <aside
-      className="pointer-events-none absolute left-4 top-4 z-30 w-[min(92vw,420px)] select-none sm:left-6 sm:top-5 sm:w-[440px]"
+      className="pointer-events-none relative w-full select-none"
       aria-label="Session overview"
     >
       {/* OVERVIEW + neon glow bar */}

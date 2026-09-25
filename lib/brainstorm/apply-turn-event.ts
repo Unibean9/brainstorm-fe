@@ -319,7 +319,11 @@ export function applyTurnStreamEvent(
       }
       ctx.setConversationNotice?.(actionNotice(data.action));
       if (data.action === "complete_session") {
-        ctx.setSnapshot?.((current) => (current ? { ...current, status: "wrapped" } : current));
+        // Mirrors the backend: every close path lands the session on the final phase.
+        ctx.setSessionPhaseKey("wrap-up");
+        ctx.setSnapshot?.((current) =>
+          current ? { ...current, status: "wrapped", phaseKey: "wrap-up" } : current
+        );
       } else if (data.action === "autonomous_ideation") {
         const job = isAutonomousJobResult(data.result) ? data.result : null;
         if (!job) break;

@@ -17,9 +17,13 @@ import type { BrainstormPhaseKey } from "@/types/brainstorm-stream";
 
 type RoomPhaseRailProps = {
   phaseKey: BrainstormPhaseKey;
+  /** Session wrapped: every stage reads as done and nothing pulses. */
+  completed?: boolean;
+  /** Supportive ("Nhanh") rooms only: user turns taken vs. the auto-wrap limit. */
+  turnBudget?: { used: number; limit: number } | null;
 };
 
-const PHASES: ReadonlyArray<{
+export const PHASES: ReadonlyArray<{
   key: BrainstormPhaseKey;
   label: string;
   blurb: string;
@@ -40,15 +44,20 @@ const FILL = { duration: 0.6, ease: [0.16, 1, 0.3, 1] as const };
  * Vertical 6-stage session progress — replaces the old per-turn engine node
  * list. Reflects sessionPhaseKey (BE), not the per-turn engine ring.
  */
-export function RoomPhaseRail({ phaseKey }: RoomPhaseRailProps) {
+export function RoomPhaseRail({ phaseKey, completed = false, turnBudget = null }: RoomPhaseRailProps) {
   const reduceMotion = useReducedMotion();
-  const currentIndex = Math.max(0, PHASES.findIndex((p) => p.key === phaseKey));
+  const currentIndex = completed
+    ? PHASES.length
+    : Math.max(0, PHASES.findIndex((p) => p.key === phaseKey));
 
   return (
     <nav
       aria-label="Tiến trình phiên brainstorm"
       className="flex w-[13.5rem] shrink-0 flex-col sm:w-56"
     >
+      {turnBudget ? (
+        <TurnBudget used={turnBudget.used} limit={turnBudget.limit} completed={completed} />
+      ) : null}
       {PHASES.map((phase, i) => {
         const done = i < currentIndex;
         const active = i === currentIndex;
@@ -65,6 +74,7 @@ export function RoomPhaseRail({ phaseKey }: RoomPhaseRailProps) {
               delay: reduceMotion ? 0 : 0.12 + i * 0.05,
             }}
             className="relative flex gap-3 pb-6 last:pb-0"
+            aria-current={active ? "step" : undefined}
           >
             {!isLast ? (
               <span
@@ -150,5 +160,43 @@ export function RoomPhaseRail({ phaseKey }: RoomPhaseRailProps) {
         );
       })}
     </nav>
+  );
+}
+
+/** "Nhanh · Lượt 3/6" with a segmented meter — tells the room the session closes itself. */
+function TurnBudget({ used, limit, completed }: { used: number; limit: number; completed: boolean }) {
+  const shown = Math.min(used, limit);
+  const remaining = limit - shown;
+  const note = completed
+    ? "Đã tổng kết"
+    : remaining <= 0
+      ? "Đang tổng kết"
+      : remaining === 1
+        ? "Lượt tới là lượt cuối, AI sẽ tổng kết"
+        : `Tự tổng kết ở lượt ${limit}`;
+  return (
+    <div className="mb-5 pl-0.5" role="status" aria-live="polite">
+      <p className="flex items-baseline gap-1.5 text-[13px] font-semibold text-white/90">
+        Nhanh
+        <span className="text-white/35" aria-hidden>
+          ·
+        </span>
+        <span className="tabular-nums">
+          Lượt {shown}/{limit}
+        </span>
+      </p>
+      <div className="mt-1.5 flex gap-1" aria-hidden>
+        {Array.from({ length: limit }, (_, i) => (
+          <span
+            key={i}
+            className={cn(
+              "h-1 flex-1 rounded-full transition-colors duration-200",
+              i < shown ? "bg-[#fbbf24]" : "bg-white/12"
+            )}
+          />
+        ))}
+      </div>
+      <p className="mt-1.5 text-[11.5px] text-white/55">{note}</p>
+    </div>
   );
 }

@@ -20,6 +20,14 @@ export const roomsApi = {
     return response.data.data;
   },
 
+  /** Giá trị mặc định (theo env của backend) để form tạo room chọn sẵn. */
+  defaults: async (): Promise<{ supportiveMode: boolean }> => {
+    const response = await apiService.get<ApiResponse<{ supportiveMode: boolean }>>(
+      "api/v1/brainstorm/room-defaults"
+    );
+    return response.data.data;
+  },
+
   /** Danh sách toàn bộ room trên instance — không cần header, không lọc theo teacher. */
   list: async (): Promise<Room[]> => {
     const response = await apiService.get<ApiResponse<Room[]>>(BASE);

@@ -1,16 +1,22 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { Check, ChevronRight, Loader2, Plus } from "lucide-react";
+import { AlertCircle, Check, ChevronRight, Loader2, Plus } from "lucide-react";
 
-import { ConstellationGrid } from "@/components/brainstorm/constellation-grid";
+import { PHASES } from "@/app/session/components/room-phase-rail";
 import { EngineAmbientBg } from "@/components/brainstorm/engine-ambient-bg";
 import { EngineCard } from "@/components/brainstorm/engine-card";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { teachersApi } from "@/lib/api/services/teachers";
 import { roomsApi } from "@/lib/api/services/rooms";
 import { voicesApi } from "@/lib/api/services/voices";
@@ -38,16 +44,10 @@ import type {
 type WizardStep = 1 | 2 | 3;
 
 const STEP_META: { id: WizardStep; label: string }[] = [
-  { id: 1, label: "Giảng viên" },
+  { id: 1, label: "Giáo viên" },
   { id: 2, label: "Room" },
   { id: 3, label: "Session" },
 ];
-
-const engineInputClass = cn(
-  "h-10 rounded-none border-0 border-b-2 border-white/15 bg-transparent px-1 text-[0.95rem]",
-  "font-medium text-[#e0f2fe] shadow-none placeholder:text-white/35",
-  "focus-visible:border-[#22d3ee] focus-visible:ring-0"
-);
 
 const FIELD_ERROR_COPY: Record<string, string> = {
   invalid_code: "Mã giáo viên không hợp lệ (tối đa 64 ký tự).",
@@ -66,12 +66,11 @@ function formatSessionStartError(error: unknown): string {
   if (apiErr.isTimeout || apiErr.isNetworkError) {
     return "Kết nối tới runtime bị gián đoạn. Bạn có thể thử lại mà không mất chủ đề.";
   }
-  return "Chưa thể khởi động session. Kiểm tra Codex/auth rồi thử lại.";
+  return "Chưa thể khởi động session. Kiểm tra CLI/auth của provider rồi thử lại.";
 }
 
 const FALLBACK_RUNTIME_PROVIDERS: { providerId: RuntimeProvider; label: string }[] = [
-  // Temporarily hidden from the UI; keep the backend/runtime contract for existing rooms.
-  // { providerId: "claude", label: "Claude" },
+  { providerId: "claude", label: "Claude" },
   { providerId: "codex", label: "Codex" },
 ];
 
@@ -88,189 +87,452 @@ const VOICE_LANGUAGE: Record<string, BrainstormLanguage> = {
   "en-male-01": "en",
 };
 
-function StepNode({
-  id,
-  label,
-  resolvedLabel,
-  status,
-  onClick,
-}: {
-  id: WizardStep;
-  label: string;
-  resolvedLabel?: string;
-  status: "done" | "active" | "upcoming";
-  onClick?: () => void;
-}) {
-  const reduceMotion = useReducedMotion();
-  const clickable = status === "done" && Boolean(onClick);
-  const tone =
-    status === "done" ? "#fbbf24" : status === "active" ? "#67e8f9" : "rgba(255,255,255,0.18)";
-  const glow =
-    status === "done"
-      ? "0 0 14px rgba(251,191,36,0.55), 0 0 30px rgba(245,158,11,0.3)"
-      : status === "active"
-        ? "0 0 16px rgba(103,232,249,0.6), 0 0 34px rgba(34,211,238,0.35)"
-        : "none";
+const PHASE_LABEL: Record<string, string> = Object.fromEntries(
+  PHASES.map((phase) => [phase.key, phase.label])
+);
 
-  return (
-    <button
-      type="button"
-      disabled={!clickable}
-      onClick={onClick}
-      className={cn(
-        "flex flex-col items-center gap-2.5 outline-none",
-        clickable ? "cursor-pointer" : "cursor-default"
-      )}
-    >
-      <motion.span
-        data-constellation-node
-        className="relative grid size-14 shrink-0 place-items-center rounded-full"
-        style={{
-          border: `2px solid ${tone}`,
-          background:
-            status === "upcoming"
-              ? "rgba(255,255,255,0.02)"
-              : "radial-gradient(circle at 35% 28%, rgba(255,255,255,0.22), rgba(7,17,31,0.7) 65%)",
-          boxShadow: glow,
-        }}
-        animate={
-          status === "active" && !reduceMotion
-            ? {
-                boxShadow: [
-                  "0 0 12px rgba(103,232,249,0.5), 0 0 26px rgba(34,211,238,0.28)",
-                  "0 0 20px rgba(103,232,249,0.7), 0 0 40px rgba(34,211,238,0.4)",
-                  "0 0 12px rgba(103,232,249,0.5), 0 0 26px rgba(34,211,238,0.28)",
-                ],
-              }
-            : undefined
-        }
-        transition={
-          status === "active" && !reduceMotion
-            ? { duration: 2.6, repeat: Infinity, ease: "easeInOut" }
-            : undefined
-        }
-        whileHover={clickable && !reduceMotion ? { scale: 1.08 } : undefined}
-      >
-        {status === "done" ? (
-          <Check className="size-5" style={{ color: "#fde68a" }} strokeWidth={2.5} />
-        ) : (
-          <span
-            className={cn(
-              "text-lg font-bold",
-              status === "active" ? "text-[#e0f2fe]" : "text-white/30"
-            )}
-          >
-            {id}
-          </span>
-        )}
-      </motion.span>
-      <span className="flex flex-col items-center gap-0.5">
-        <span
-          className={cn(
-            "text-[11px] font-semibold uppercase tracking-[0.14em]",
-            status === "upcoming" ? "text-white/30" : "text-white/75"
-          )}
-        >
-          {label}
-        </span>
-        {resolvedLabel ? (
-          <span className="max-w-32 truncate text-[11px] font-medium text-[#fde68a]/90">
-            {resolvedLabel}
-          </span>
-        ) : null}
-      </span>
-    </button>
-  );
+const PROVIDER_LABEL: Record<RuntimeProvider, string> = { claude: "Claude", codex: "Codex" };
+
+type RoomStyle = "guided" | "supportive";
+
+const ROOM_STYLE_OPTIONS: { value: RoomStyle; label: string }[] = [
+  { value: "guided", label: "Chuyên sâu" },
+  { value: "supportive", label: "Nhanh" },
+];
+
+const ROOM_STYLE_HINT: Record<RoomStyle, string> = {
+  guided: "AI dẫn dắt bằng câu hỏi, không giới hạn số lượt.",
+  supportive:
+    "AI chủ động gợi ý và tự điền chỗ trống, tổng kết rồi tự đóng session sau khoảng 6 lượt.",
+};
+
+function roomProvider(room: Pick<Room, "runtimeProvider" | "agent"> | null): RuntimeProvider {
+  return room?.runtimeProvider ?? room?.agent ?? "claude";
 }
 
-function ListRow({
-  tone = "cyan",
-  title,
-  meta,
-  badge,
-  onClick,
+/** "Cô Lan (Ngữ văn)" → "L": initial of the given name, ignoring honorific and notes. */
+function teacherInitial(name: string): string {
+  const words = name.replace(/\(.*?\)/g, "").trim().split(/\s+/);
+  return (words[words.length - 1]?.[0] ?? "?").toUpperCase();
+}
+
+/* ------------------------------------------------------------------ */
+/* Primitives                                                          */
+/* ------------------------------------------------------------------ */
+
+const inputClass = cn(
+  "h-10 rounded-md border-white/12 bg-[#07111f] px-3 text-sm text-[#e0f2fe] md:text-sm",
+  "placeholder:text-white/40 dark:bg-[#07111f]",
+  "focus-visible:border-[#67e8f9]/70 focus-visible:ring-2 focus-visible:ring-[#67e8f9]/25"
+);
+
+function PrimaryButton({
   pending,
-}: {
-  tone?: "cyan" | "gold";
-  title: ReactNode;
-  meta?: ReactNode;
-  badge?: ReactNode;
-  onClick: () => void;
-  pending?: boolean;
-}) {
-  const dot = tone === "gold" ? "#fde68a" : "#a5f3fc";
-  const ring = tone === "gold" ? "#fbbf24" : "#67e8f9";
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={pending}
-      className="group flex w-full items-center gap-3.5 rounded-lg px-2.5 py-2.5 text-left outline-none transition-colors hover:bg-white/[0.04] focus-visible:bg-white/[0.05] disabled:pointer-events-none disabled:opacity-50"
-    >
-      <span
-        className="grid size-9 shrink-0 place-items-center rounded-full"
-        style={{ border: `1.5px solid ${ring}`, boxShadow: `0 0 8px ${ring}55` }}
-      >
-        {pending ? (
-          <Loader2 className="size-3.5 animate-spin text-white/70" />
-        ) : (
-          <span className="size-1.5 rounded-full" style={{ background: dot }} />
-        )}
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-[0.95rem] font-medium text-white">{title}</span>
-        {meta ? <span className="block truncate text-[11px] text-white/40">{meta}</span> : null}
-      </span>
-      {badge}
-      <ChevronRight
-        className="size-4 shrink-0 text-white/25 transition-transform group-hover:translate-x-0.5 group-hover:text-white/50"
-        aria-hidden
-      />
-    </button>
-  );
-}
-
-function StepShell({
-  title,
-  hint,
+  pendingLabel,
   children,
 }: {
-  title: string;
-  hint?: string;
+  pending: boolean;
+  pendingLabel?: string;
   children: ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-4">
-      <div>
-        <p className="font-sans text-[1.3rem] font-bold tracking-tight text-white">{title}</p>
-        {hint ? <p className="mt-1 text-[13px] text-white/45">{hint}</p> : null}
-      </div>
+    <button
+      type="submit"
+      disabled={pending}
+      className={cn(
+        "inline-flex h-9 items-center gap-2 rounded-full border border-[#22d3ee]/55 bg-[#22d3ee]/15 px-4",
+        "text-sm font-semibold text-[#e0f2fe] shadow-[0_0_18px_-6px_rgba(34,211,238,0.6)]",
+        "transition-colors duration-150 hover:bg-[#22d3ee]/25",
+        "outline-none focus-visible:ring-2 focus-visible:ring-[#67e8f9]/60",
+        "disabled:cursor-not-allowed disabled:opacity-60"
+      )}
+    >
+      {pending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+      {pending && pendingLabel ? pendingLabel : children}
+    </button>
+  );
+}
+
+function GhostButton({
+  onClick,
+  children,
+  className,
+}: {
+  onClick: () => void;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-sm font-medium text-white/70",
+        "transition-colors duration-150 hover:bg-white/[0.06] hover:text-white",
+        "outline-none focus-visible:ring-2 focus-visible:ring-[#67e8f9]/60",
+        className
+      )}
+    >
       {children}
+    </button>
+  );
+}
+
+function Field({
+  label,
+  htmlFor,
+  hint,
+  children,
+}: {
+  label: string;
+  htmlFor?: string;
+  hint?: ReactNode;
+  children: ReactNode;
+}) {
+  const LabelTag = htmlFor ? "label" : "span";
+  return (
+    <div className="flex flex-col gap-1.5">
+      <LabelTag htmlFor={htmlFor} className="text-[13px] font-medium text-white/85">
+        {label}
+      </LabelTag>
+      {children}
+      {hint ? <p className="text-xs leading-relaxed text-white/55">{hint}</p> : null}
     </div>
   );
 }
 
-function ComposerToggle({
-  open,
-  onOpen,
+/** Native radios styled as a segmented control — keyboard arrows and form semantics for free. */
+function Segmented<T extends string>({
+  name,
   label,
+  value,
+  options,
+  onChange,
 }: {
-  open: boolean;
-  onOpen: () => void;
+  name: string;
   label: string;
+  value: T | null;
+  options: { value: T; label: string }[];
+  onChange: (value: T) => void;
 }) {
-  if (open) return null;
+  return (
+    <div
+      role="radiogroup"
+      aria-label={label}
+      className="flex gap-1 rounded-md border border-white/12 bg-[#07111f] p-1"
+    >
+      {options.map((option) => (
+        <label
+          key={option.value}
+          className={cn(
+            "flex h-8 flex-1 cursor-pointer items-center justify-center rounded px-3 text-sm font-medium",
+            "text-white/60 transition-colors duration-150 hover:text-white/90",
+            "has-[:checked]:bg-[#22d3ee]/15 has-[:checked]:text-[#e0f2fe]",
+            "has-[:checked]:shadow-[inset_0_0_0_1px_rgba(103,232,249,0.35)]",
+            "has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[#67e8f9]/60"
+          )}
+        >
+          <input
+            type="radio"
+            name={name}
+            value={option.value}
+            checked={value === option.value}
+            onChange={() => onChange(option.value)}
+            className="sr-only"
+          />
+          {option.label}
+        </label>
+      ))}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Layout pieces                                                       */
+/* ------------------------------------------------------------------ */
+
+function Stepper({
+  step,
+  values,
+  onJump,
+}: {
+  step: WizardStep;
+  values: Partial<Record<WizardStep, string>>;
+  onJump: (target: WizardStep) => void;
+}) {
+  return (
+    <nav aria-label="Các bước bắt đầu" className="border-b border-white/[0.08] px-3 py-2.5 sm:px-4">
+      <ol className="flex min-h-9 items-center gap-1">
+        {STEP_META.map((s, index) => {
+          const status = s.id < step ? "done" : s.id === step ? "active" : "upcoming";
+          const value = status === "done" ? values[s.id] : undefined;
+          const marker = (
+            <span
+              className={cn(
+                "grid size-5 shrink-0 place-items-center rounded-full text-[11px] font-bold",
+                status === "done" && "bg-[#22d3ee]/15 text-[#67e8f9]",
+                status === "active" && "bg-[#67e8f9] text-[#041018]",
+                status === "upcoming" && "border border-white/20 text-white/45"
+              )}
+            >
+              {status === "done" ? <Check className="size-3" strokeWidth={3} aria-hidden /> : s.id}
+            </span>
+          );
+          const text = (
+            <span className="flex min-w-0 flex-col text-left leading-tight">
+              {value ? (
+                <>
+                  <span className="text-[11px] text-white/50">{s.label}</span>
+                  <span className="truncate text-[13px] font-medium text-white/90">{value}</span>
+                </>
+              ) : (
+                <span
+                  className={cn(
+                    "text-[13px] font-medium",
+                    status === "active" ? "text-white" : "text-white/45"
+                  )}
+                >
+                  {s.label}
+                </span>
+              )}
+            </span>
+          );
+
+          return (
+            <li
+              key={s.id}
+              className={cn("flex min-w-0 items-center gap-1", value && "flex-1 sm:flex-none")}
+              aria-current={status === "active" ? "step" : undefined}
+            >
+              {index > 0 ? (
+                <ChevronRight className="size-3.5 shrink-0 text-white/25" aria-hidden />
+              ) : null}
+              {status === "done" ? (
+                <button
+                  type="button"
+                  onClick={() => onJump(s.id)}
+                  title={`Đổi ${s.label.toLowerCase()}`}
+                  className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1 outline-none transition-colors duration-150 hover:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-[#67e8f9]/60"
+                >
+                  {marker}
+                  {text}
+                </button>
+              ) : (
+                <span className="flex min-w-0 items-center gap-2 px-2 py-1">
+                  {marker}
+                  {text}
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+    </nav>
+  );
+}
+
+function StepHeader({
+  title,
+  hint,
+  action,
+  headingRef,
+}: {
+  title: string;
+  hint?: ReactNode;
+  action?: ReactNode;
+  headingRef?: RefObject<HTMLHeadingElement | null>;
+}) {
+  return (
+    <div className="mb-4 flex flex-col items-start gap-3 sm:flex-row sm:justify-between sm:gap-4">
+      <div className="min-w-0">
+        <h2
+          ref={headingRef}
+          tabIndex={-1}
+          className="text-xl font-bold tracking-tight text-white outline-none"
+        >
+          {title}
+        </h2>
+        {hint ? <p className="mt-1 text-sm leading-relaxed text-white/65">{hint}</p> : null}
+      </div>
+      {action ? <div className="shrink-0">{action}</div> : null}
+    </div>
+  );
+}
+
+function NewButton({ onClick, children }: { onClick: () => void; children: ReactNode }) {
   return (
     <button
       type="button"
-      onClick={onOpen}
-      className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-white/15 py-3 text-sm font-semibold text-white/45 transition-colors hover:border-[#67e8f9]/40 hover:text-[#67e8f9]"
+      onClick={onClick}
+      className={cn(
+        "inline-flex h-8 items-center gap-1.5 rounded-full border border-white/15 px-3 text-[13px] font-medium text-white/80",
+        "transition-colors duration-150 hover:border-[#67e8f9]/50 hover:text-[#e0f2fe]",
+        "outline-none focus-visible:ring-2 focus-visible:ring-[#67e8f9]/60"
+      )}
     >
-      <Plus className="size-4" aria-hidden />
-      {label}
+      <Plus className="size-3.5" aria-hidden />
+      {children}
     </button>
   );
 }
+
+/** Inline create form. Rendered above the list so it sits right under the button that opened it. */
+function Composer({
+  open,
+  onSubmit,
+  children,
+}: {
+  open: boolean;
+  onSubmit: (e: FormEvent) => void;
+  children: ReactNode;
+}) {
+  const reduceMotion = useReducedMotion();
+  return (
+    <AnimatePresence initial={false}>
+      {open ? (
+        <motion.form
+          key="composer"
+          onSubmit={onSubmit}
+          initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -4 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: reduceMotion ? 0 : 0.18, ease: [0.25, 1, 0.5, 1] }}
+          className="mb-4 flex flex-col gap-4 rounded-lg border border-white/10 bg-white/[0.025] p-4"
+        >
+          {children}
+        </motion.form>
+      ) : null}
+    </AnimatePresence>
+  );
+}
+
+function ComposerActions({
+  pending,
+  submitLabel,
+  pendingLabel,
+  onCancel,
+  aside,
+}: {
+  pending: boolean;
+  submitLabel: string;
+  pendingLabel?: string;
+  onCancel?: () => void;
+  aside?: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-3 pt-1 sm:flex-row sm:items-center">
+      {aside ? <p className="text-xs text-white/55 sm:mr-auto">{aside}</p> : null}
+      <div className="flex items-center justify-end gap-2 sm:ml-auto">
+        {onCancel ? <GhostButton onClick={onCancel}>Huỷ</GhostButton> : null}
+        <PrimaryButton pending={pending} pendingLabel={pendingLabel}>
+          {submitLabel}
+        </PrimaryButton>
+      </div>
+    </div>
+  );
+}
+
+function ItemList({ children }: { children: ReactNode }) {
+  return (
+    <ul role="list" className="-mx-2 flex max-h-[min(22rem,48vh)] flex-col overflow-y-auto">
+      {children}
+    </ul>
+  );
+}
+
+function ItemRow({
+  leading,
+  title,
+  meta,
+  trailing,
+  onClick,
+  pending,
+  disabled,
+}: {
+  leading?: ReactNode;
+  title: ReactNode;
+  meta?: ReactNode;
+  trailing?: ReactNode;
+  onClick: () => void;
+  pending?: boolean;
+  disabled?: boolean;
+}) {
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        aria-busy={pending || undefined}
+        className={cn(
+          "group flex w-full items-center gap-3 rounded-md px-2 py-2.5 text-left",
+          "outline-none transition-colors duration-150 hover:bg-white/[0.05]",
+          "focus-visible:bg-white/[0.05] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#67e8f9]/50",
+          "disabled:cursor-default disabled:hover:bg-transparent"
+        )}
+      >
+        {leading}
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[15px] font-medium text-white">{title}</span>
+          {meta ? <span className="mt-0.5 block truncate text-[13px] text-white/60">{meta}</span> : null}
+        </span>
+        {trailing}
+        {pending ? (
+          <Loader2 className="size-4 shrink-0 animate-spin text-[#67e8f9]" aria-hidden />
+        ) : (
+          <ChevronRight
+            className="size-4 shrink-0 text-white/30 transition-[color,transform] duration-150 group-hover:translate-x-0.5 group-hover:text-white/70"
+            aria-hidden
+          />
+        )}
+      </button>
+    </li>
+  );
+}
+
+function Tag({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "live" }) {
+  return (
+    <span
+      className={cn(
+        "shrink-0 rounded px-1.5 py-0.5 text-xs font-medium",
+        tone === "live" ? "bg-[#22c55e]/12 text-[#86efac]" : "bg-white/[0.06] text-white/70"
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+function ListSkeleton({ leading = true }: { leading?: boolean }) {
+  return (
+    <div className="flex flex-col" aria-busy="true" aria-label="Đang tải">
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="flex items-center gap-3 py-2.5">
+          {leading ? <div className="size-8 animate-pulse rounded-full bg-white/[0.07]" /> : null}
+          <div className="flex flex-1 flex-col gap-1.5">
+            <div className="h-3.5 w-1/2 animate-pulse rounded bg-white/[0.08]" />
+            <div className="h-3 w-1/3 animate-pulse rounded bg-white/[0.05]" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LoadError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md border border-white/10 px-3 py-2.5 text-sm text-white/70">
+      <span>Không tải được danh sách. Kiểm tra backend đang chạy.</span>
+      <GhostButton onClick={onRetry} className="h-8 text-[#a5f3fc]">
+        Thử lại
+      </GhostButton>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Wizard                                                              */
+/* ------------------------------------------------------------------ */
 
 export function OnboardingWizard() {
   const router = useRouter();
@@ -295,19 +557,16 @@ export function OnboardingWizard() {
   const [sessionTopic, setSessionTopic] = useState("");
   const [selectedVoiceId, setSelectedVoiceId] = useState<string | null>(null);
   const [selectedRuntimeProvider, setSelectedRuntimeProvider] = useState<RuntimeProvider>("codex");
+  // null = not touched yet → follow the backend's env default.
+  const [selectedRoomStyle, setSelectedRoomStyle] = useState<RoomStyle | null>(null);
   const [selectedLanguage, setSelectedLanguage] = useState<BrainstormLanguage>("vi");
   const [stepError, setStepError] = useState<string | null>(null);
   const [pendingCode, setPendingCode] = useState<string | null>(null);
 
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const teacherInputRef = useRef<HTMLInputElement>(null);
   const roomInputRef = useRef<HTMLInputElement>(null);
   const sessionInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (roomComposerOpen) roomInputRef.current?.focus();
-  }, [roomComposerOpen]);
-  useEffect(() => {
-    if (sessionComposerOpen) sessionInputRef.current?.focus();
-  }, [sessionComposerOpen]);
 
   const teachersQuery = useQuery({
     queryKey: ["brainstorm", "teachers"],
@@ -351,11 +610,18 @@ export function OnboardingWizard() {
     staleTime: Infinity,
   });
 
-  const codexProviderOptions =
-    runtimeProvidersQuery.data?.filter((provider) => provider.providerId === "codex") ?? [];
-  const runtimeProviderOptions = codexProviderOptions.length
-    ? codexProviderOptions
+  const roomDefaultsQuery = useQuery({
+    queryKey: brainstormKeys.roomDefaults(),
+    queryFn: roomsApi.defaults,
+    enabled: step === 2,
+    staleTime: 60_000,
+  });
+
+  const runtimeProviderOptions = runtimeProvidersQuery.data?.length
+    ? runtimeProvidersQuery.data
     : FALLBACK_RUNTIME_PROVIDERS;
+  const roomStyle: RoomStyle =
+    selectedRoomStyle ?? (roomDefaultsQuery.data?.supportiveMode ? "supportive" : "guided");
   const languageOptions = languagesQuery.data?.length ? languagesQuery.data : FALLBACK_LANGUAGES;
   const compatibleVoiceOptions = (voicesQuery.data ?? []).filter(
     (voice) => VOICE_LANGUAGE[voice.voiceId] === selectedLanguage
@@ -363,6 +629,33 @@ export function OnboardingWizard() {
   const effectiveVoiceId = compatibleVoiceOptions.some((voice) => voice.voiceId === selectedVoiceId)
     ? selectedVoiceId
     : (compatibleVoiceOptions[0]?.voiceId ?? null);
+
+  // An empty list has nothing to choose from, so the create form is the step's content.
+  const teachersEmpty = teachersQuery.isSuccess && teachersQuery.data.length === 0;
+  const roomsEmpty = roomsQuery.isSuccess && roomsQuery.data.length === 0;
+  const sessionsEmpty = sessionsQuery.isSuccess && sessionsQuery.data.length === 0;
+  const teacherFormOpen = teacherComposerOpen || teachersEmpty;
+  const roomFormOpen = roomComposerOpen || roomsEmpty;
+  const sessionFormOpen = sessionComposerOpen || sessionsEmpty;
+
+  useEffect(() => {
+    if (teacherComposerOpen) teacherInputRef.current?.focus();
+  }, [teacherComposerOpen]);
+  useEffect(() => {
+    if (roomComposerOpen) roomInputRef.current?.focus();
+  }, [roomComposerOpen]);
+  useEffect(() => {
+    if (sessionComposerOpen) sessionInputRef.current?.focus();
+  }, [sessionComposerOpen]);
+  // Move focus to the new step's heading after a step change (not on first paint).
+  const firstStepRender = useRef(true);
+  useEffect(() => {
+    if (firstStepRender.current) {
+      firstStepRender.current = false;
+      return;
+    }
+    headingRef.current?.focus({ preventScroll: true });
+  }, [step]);
 
   const registerTeacherMutation = useMutation({
     mutationFn: teachersApi.register,
@@ -432,7 +725,7 @@ export function OnboardingWizard() {
     const trimmedCode = code.trim();
     const trimmedName = name.trim();
     if (!trimmedCode || !trimmedName) {
-      setStepError("Nhập cả mã và tên trước đã.");
+      setStepError("Nhập cả tên và mã giáo viên trước đã.");
       return;
     }
     setStepError(null);
@@ -448,14 +741,18 @@ export function OnboardingWizard() {
       return;
     }
     setStepError(null);
-    createRoomMutation.mutate({ name: trimmed, runtimeProvider: selectedRuntimeProvider });
+    createRoomMutation.mutate({
+      name: trimmed,
+      runtimeProvider: selectedRuntimeProvider,
+      supportiveMode: roomStyle === "supportive",
+    });
   };
 
   const submitNewSession = (e: FormEvent) => {
     e.preventDefault();
     const trimmed = sessionTopic.trim();
     if (!trimmed) {
-      setStepError("Đặt tên session trước đã.");
+      setStepError("Nhập chủ đề brainstorm trước đã.");
       return;
     }
     if (!effectiveVoiceId) {
@@ -480,257 +777,313 @@ export function OnboardingWizard() {
     setManualStep(target);
   };
 
-  const slideVariants = {
-    initial: reduceMotion ? { opacity: 0 } : { opacity: 0, x: 16 },
-    animate: { opacity: 1, x: 0 },
-    exit: reduceMotion ? { opacity: 0 } : { opacity: 0, x: -16 },
+  // Open sessions first; the API order (newest first) is kept within each group.
+  const sessions = [...(sessionsQuery.data ?? [])].sort(
+    (a, b) => Number(a.status === "wrapped") - Number(b.status === "wrapped")
+  );
+
+  const stepMotion = {
+    initial: reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6 },
+    animate: { opacity: 1, y: 0 },
+    exit: { opacity: 0 },
+    transition: { duration: reduceMotion ? 0 : 0.18, ease: [0.25, 1, 0.5, 1] as const },
   };
 
   return (
     <div className="engine-surface relative min-h-dvh overflow-hidden">
       <EngineAmbientBg />
 
-      <div className="relative z-10 flex min-h-dvh flex-col items-center px-5 py-14 sm:py-20">
-        <div className="mb-10 text-center">
-          <p
-            className="font-sans text-[1.4rem] font-bold tracking-tight text-[#e0f2fe]"
-            style={{ textShadow: "0 0 24px rgba(34,211,238,0.4)" }}
-          >
-            AI Brainstorm Room
+      <main className="relative z-10 mx-auto flex min-h-dvh w-full max-w-[40rem] flex-col px-4 pt-[9vh] pb-16 sm:px-6">
+        <header className="mb-5 px-1">
+          <h1 className="text-base font-bold tracking-tight text-[#e0f2fe]">AI Brainstorm Room</h1>
+          <p className="mt-0.5 text-sm text-white/60">
+            Chọn người dùng, room và session để vào phiên brainstorm.
           </p>
-          <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-white/40">
-            Thinking Orchestration Engine
-          </p>
-        </div>
+        </header>
 
-        <ConstellationGrid className="mb-10 flex w-full max-w-2xl items-start justify-between">
-          {STEP_META.map((s) => (
-            <StepNode
-              key={s.id}
-              id={s.id}
-              label={s.label}
-              resolvedLabel={
-                s.id === 1 ? teacher?.name : s.id === 2 ? selectedRoom?.name : undefined
-              }
-              status={s.id < step ? "done" : s.id === step ? "active" : "upcoming"}
-              onClick={s.id < step ? () => goToStep(s.id) : undefined}
-            />
-          ))}
-        </ConstellationGrid>
+        <EngineCard className="w-full p-0!">
+          <Stepper
+            step={step}
+            values={{ 1: teacher?.name, 2: selectedRoom?.name }}
+            onJump={goToStep}
+          />
 
-        <div className="w-full max-w-2xl">
-          <EngineCard tone={step === 3 ? "gold" : "cyan"} className="w-full overflow-hidden p-6!">
+          <div className="p-5 sm:p-6">
             <AnimatePresence mode="wait" initial={false}>
               {step === 1 ? (
-                <motion.div
-                  key="step-1"
-                  variants={slideVariants}
-                  initial="initial"
-                  animate="animate"
-                  exit="exit"
-                  transition={{ duration: reduceMotion ? 0 : 0.22 }}
-                >
-                  <StepShell
-                    title="Ai đang thao tác trên máy này?"
-                    hint="Chọn tên bạn trong danh sách, hoặc nhập mã mới nếu đây là lần đầu."
-                  >
-                    {teachersQuery.isPending ? (
-                      <ListSkeleton />
-                    ) : teachersQuery.data && teachersQuery.data.length > 0 ? (
-                      <div className="flex max-h-52 flex-col gap-0.5 overflow-y-auto">
-                        {teachersQuery.data.map((t) => (
-                          <ListRow
-                            key={t.code}
-                            title={t.name}
-                            meta={`Mã: ${t.code}`}
-                            pending={registerTeacherMutation.isPending && pendingCode === t.code}
-                            onClick={() => selectTeacher(t)}
-                          />
-                        ))}
-                      </div>
-                    ) : null}
+                <motion.section key="step-1" {...stepMotion}>
+                  <StepHeader
+                    headingRef={headingRef}
+                    title="Ai đang dùng máy này?"
+                    hint={
+                      teachersEmpty
+                        ? "Chưa có giáo viên nào trên máy này. Nhập tên và mã để bắt đầu."
+                        : "Chọn tên của bạn. Lần đầu dùng thì thêm giáo viên mới."
+                    }
+                    action={
+                      !teacherFormOpen && teachersQuery.isSuccess ? (
+                        <NewButton onClick={() => setTeacherComposerOpen(true)}>
+                          Giáo viên mới
+                        </NewButton>
+                      ) : null
+                    }
+                  />
 
-                    <ComposerToggle
-                      open={teacherComposerOpen}
-                      onOpen={() => setTeacherComposerOpen(true)}
-                      label="Giáo viên mới"
-                    />
-
-                    {teacherComposerOpen ? (
-                      <form
-                        onSubmit={submitNewTeacher}
-                        className="flex flex-col gap-3.5 border-t border-white/8 pt-4"
-                      >
-                        <div className="flex flex-col gap-1.5">
-                          <Label
-                            htmlFor="wiz-code"
-                            className="text-[11px] font-semibold tracking-[0.08em] text-white/45"
-                          >
-                            MÃ GIÁO VIÊN
-                          </Label>
-                          <Input
-                            id="wiz-code"
-                            value={code}
-                            onChange={(e) => setCode(e.target.value)}
-                            placeholder="vd. gv-hoa-01"
-                            maxLength={64}
-                            autoComplete="username"
-                            className={engineInputClass}
-                          />
-                        </div>
-                        <div className="flex flex-col gap-1.5">
-                          <Label
-                            htmlFor="wiz-name"
-                            className="text-[11px] font-semibold tracking-[0.08em] text-white/45"
-                          >
-                            TÊN HIỂN THỊ
-                          </Label>
-                          <Input
-                            id="wiz-name"
-                            value={name}
-                            onChange={(e) => setName(e.target.value)}
-                            placeholder="vd. Cô Hoa"
-                            autoComplete="name"
-                            className={engineInputClass}
-                          />
-                        </div>
-                        <WizardSubmitRow
-                          pending={registerTeacherMutation.isPending}
-                          label="Xác nhận"
-                          onCancel={() => setTeacherComposerOpen(false)}
+                  <Composer open={teacherFormOpen} onSubmit={submitNewTeacher}>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <Field label="Tên hiển thị" htmlFor="wiz-name">
+                        <Input
+                          ref={teacherInputRef}
+                          id="wiz-name"
+                          value={name}
+                          onChange={(e) => setName(e.target.value)}
+                          placeholder="vd. Cô Hoa"
+                          autoComplete="name"
+                          className={inputClass}
                         />
-                      </form>
-                    ) : null}
-                  </StepShell>
-                </motion.div>
+                      </Field>
+                      <Field label="Mã giáo viên" htmlFor="wiz-code">
+                        <Input
+                          id="wiz-code"
+                          value={code}
+                          onChange={(e) => setCode(e.target.value)}
+                          placeholder="vd. gv-hoa-01"
+                          maxLength={64}
+                          autoComplete="username"
+                          className={inputClass}
+                        />
+                      </Field>
+                    </div>
+                    <ComposerActions
+                      pending={registerTeacherMutation.isPending}
+                      submitLabel="Tiếp tục"
+                      aside="Mã giúp nhận ra bạn ở lần sau."
+                      onCancel={teachersEmpty ? undefined : () => setTeacherComposerOpen(false)}
+                    />
+                  </Composer>
+
+                  {teachersQuery.isPending ? (
+                    <ListSkeleton />
+                  ) : teachersQuery.isError ? (
+                    <LoadError onRetry={() => teachersQuery.refetch()} />
+                  ) : teachersQuery.data.length > 0 ? (
+                    <ItemList>
+                      {teachersQuery.data.map((t) => (
+                        <ItemRow
+                          key={t.code}
+                          leading={
+                            <span
+                              aria-hidden
+                              className="grid size-8 shrink-0 place-items-center rounded-full bg-[#67e8f9]/10 text-sm font-semibold text-[#a5f3fc]"
+                            >
+                              {teacherInitial(t.name)}
+                            </span>
+                          }
+                          title={t.name}
+                          meta={t.code}
+                          pending={registerTeacherMutation.isPending && pendingCode === t.code}
+                          disabled={registerTeacherMutation.isPending}
+                          onClick={() => selectTeacher(t)}
+                        />
+                      ))}
+                    </ItemList>
+                  ) : null}
+                </motion.section>
               ) : step === 2 ? (
-                <motion.div
-                  key="step-2"
-                  variants={slideVariants}
-                  initial="initial"
-                  animate="animate"
-                  exit="exit"
-                  transition={{ duration: reduceMotion ? 0 : 0.22 }}
-                >
-                  <StepShell
+                <motion.section key="step-2" {...stepMotion}>
+                  <StepHeader
+                    headingRef={headingRef}
                     title="Chọn room"
-                    hint="Toàn bộ room trên máy này, hoặc ghim room mới cho lớp của bạn."
-                  >
-                    {roomsQuery.isPending ? (
-                      <ListSkeleton />
-                    ) : roomsQuery.data && roomsQuery.data.length > 0 ? (
-                      <div className="flex max-h-52 flex-col gap-0.5 overflow-y-auto">
-                        {roomsQuery.data.map((room) => (
-                          <ListRow
+                    hint={
+                      roomsEmpty
+                        ? "Chưa có room nào. Tạo room đầu tiên — mỗi room gom các session của một lớp hoặc dự án."
+                        : "Mỗi room gom các session brainstorm của một lớp hoặc dự án."
+                    }
+                    action={
+                      !roomFormOpen && roomsQuery.isSuccess ? (
+                        <NewButton onClick={() => setRoomComposerOpen(true)}>Room mới</NewButton>
+                      ) : null
+                    }
+                  />
+
+                  <Composer open={roomFormOpen} onSubmit={submitNewRoom}>
+                    <Field label="Tên room" htmlFor="wiz-room-name">
+                      <Input
+                        ref={roomInputRef}
+                        id="wiz-room-name"
+                        value={roomName}
+                        onChange={(e) => setRoomName(e.target.value)}
+                        placeholder="vd. Lớp 10A — Ý tưởng CLB"
+                        maxLength={200}
+                        className={inputClass}
+                      />
+                    </Field>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <Field label="AI provider" hint="Mọi session trong room dùng provider này.">
+                        <Segmented
+                          name="wiz-runtime-provider"
+                          label="AI provider"
+                          value={selectedRuntimeProvider}
+                          options={runtimeProviderOptions.map((p) => ({
+                            value: p.providerId,
+                            label: p.label,
+                          }))}
+                          onChange={setSelectedRuntimeProvider}
+                        />
+                      </Field>
+                      <Field label="Cách dẫn dắt" hint={ROOM_STYLE_HINT[roomStyle]}>
+                        <Segmented
+                          name="wiz-room-style"
+                          label="Cách dẫn dắt"
+                          value={roomStyle}
+                          options={ROOM_STYLE_OPTIONS}
+                          onChange={setSelectedRoomStyle}
+                        />
+                      </Field>
+                    </div>
+                    <ComposerActions
+                      pending={createRoomMutation.isPending}
+                      submitLabel="Tạo room"
+                      aside="Không đổi được hai lựa chọn này sau khi tạo."
+                      onCancel={roomsEmpty ? undefined : () => setRoomComposerOpen(false)}
+                    />
+                  </Composer>
+
+                  {roomsQuery.isPending ? (
+                    <ListSkeleton leading={false} />
+                  ) : roomsQuery.isError ? (
+                    <LoadError onRetry={() => roomsQuery.refetch()} />
+                  ) : roomsQuery.data.length > 0 ? (
+                    <ItemList>
+                      {roomsQuery.data.map((room) => {
+                        const mine = teacher?.teacherId === room.ownerTeacherId;
+                        return (
+                          <ItemRow
                             key={room.roomId}
                             title={room.name}
-                            meta={`${room.ownerName ?? "—"} · ${formatRelativeTime(room.createdAt)} · Provider: ${room.runtimeProvider ?? room.agent ?? "claude"}`}
-                            badge={
-                              <span className="shrink-0 rounded-full border border-[#67e8f9]/20 px-2 py-0.5 text-[10px] font-semibold text-[#a5f3fc]/75">
-                                {(room.runtimeProvider ?? room.agent ?? "claude").toUpperCase()}
-                              </span>
-                            }
+                            meta={[
+                              mine ? "Của bạn" : (room.ownerName ?? "Không rõ"),
+                              formatRelativeTime(room.createdAt),
+                              room.supportiveMode ? "Nhanh" : null,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                            trailing={<Tag>{PROVIDER_LABEL[roomProvider(room)]}</Tag>}
                             onClick={() => {
                               setSelectedRoom(room);
                               setSelectedRuntimeProvider("codex");
                               setManualStep(3);
                             }}
                           />
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-sm text-white/40">
-                        Chưa có room nào — ghim room đầu tiên.
-                      </p>
-                    )}
-
-                    <ComposerToggle
-                      open={roomComposerOpen}
-                      onOpen={() => setRoomComposerOpen(true)}
-                      label="Room mới"
-                    />
-
-                    {roomComposerOpen ? (
-                      <form
-                        onSubmit={submitNewRoom}
-                        className="flex flex-col gap-3.5 border-t border-white/8 pt-4"
-                      >
-                        <Input
-                          ref={roomInputRef}
-                          value={roomName}
-                          onChange={(e) => setRoomName(e.target.value)}
-                          placeholder="Tên room, vd. Lớp 10A — Ý tưởng CLB"
-                          maxLength={200}
-                          className={engineInputClass}
-                        />
-                        <div className="flex flex-col gap-1.5">
-                          <Label
-                            htmlFor="wiz-runtime-provider"
-                            className="text-[11px] font-semibold tracking-[0.08em] text-white/45"
-                          >
-                            RUNTIME PROVIDER CHO PHÒNG
-                          </Label>
-                          <select
-                            id="wiz-runtime-provider"
-                            value={selectedRuntimeProvider}
-                            onChange={(e) =>
-                              setSelectedRuntimeProvider(e.target.value as RuntimeProvider)
-                            }
-                            className="h-10 rounded-lg border border-white/12 bg-[#07111f] px-3 text-sm font-medium text-[#e0f2fe] outline-none transition-colors focus-visible:border-[#67e8f9] focus-visible:ring-2 focus-visible:ring-[#67e8f9]/30"
-                          >
-                            {runtimeProviderOptions.map((provider) => (
-                              <option key={provider.providerId} value={provider.providerId}>
-                                {provider.label}
-                              </option>
-                            ))}
-                          </select>
-                          <p className="text-[11px] leading-snug text-white/38">
-                            Provider này được ghim cho conversation chính của room; không
-                            silent-switch giữa phiên.
-                          </p>
-                        </div>
-                        <WizardSubmitRow
-                          pending={createRoomMutation.isPending}
-                          label="Ghim room"
-                          onCancel={() => setRoomComposerOpen(false)}
-                        />
-                      </form>
-                    ) : null}
-                  </StepShell>
-                </motion.div>
+                        );
+                      })}
+                    </ItemList>
+                  ) : null}
+                </motion.section>
               ) : (
-                <motion.div
-                  key="step-3"
-                  variants={slideVariants}
-                  initial="initial"
-                  animate="animate"
-                  exit="exit"
-                  transition={{ duration: reduceMotion ? 0 : 0.22 }}
-                >
-                  <StepShell
+                <motion.section key="step-3" {...stepMotion}>
+                  <StepHeader
+                    headingRef={headingRef}
                     title="Chọn session"
-                    hint={selectedRoom ? `Trong room "${selectedRoom.name}".` : undefined}
-                  >
-                    {sessionsQuery.isPending ? (
-                      <ListSkeleton />
-                    ) : sessionsQuery.data && sessionsQuery.data.length > 0 ? (
-                      <div className="flex max-h-52 flex-col gap-0.5 overflow-y-auto">
-                        {sessionsQuery.data.map((session: RoomSessionSummary) => (
-                          <ListRow
+                    hint={
+                      sessionsEmpty
+                        ? "Room này chưa có session. Nêu chủ đề để bắt đầu session đầu tiên."
+                        : "Mở lại một session cũ, hoặc bắt đầu chủ đề mới."
+                    }
+                    action={
+                      !sessionFormOpen && sessionsQuery.isSuccess ? (
+                        <NewButton onClick={() => setSessionComposerOpen(true)}>
+                          Session mới
+                        </NewButton>
+                      ) : null
+                    }
+                  />
+
+                  <Composer open={sessionFormOpen} onSubmit={submitNewSession}>
+                    <Field
+                      label="Chủ đề brainstorm"
+                      htmlFor="wiz-topic"
+                      hint="Chỉ cần nêu chủ đề. Ở các lượt đầu, AI sẽ cùng bạn làm rõ mục tiêu, bối cảnh và tiêu chí thành công."
+                    >
+                      <Input
+                        ref={sessionInputRef}
+                        id="wiz-topic"
+                        value={sessionTopic}
+                        onChange={(e) => setSessionTopic(e.target.value)}
+                        placeholder="vd. Làm sao giúp học sinh đọc nhiều hơn?"
+                        maxLength={200}
+                        className={inputClass}
+                      />
+                    </Field>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <Field label="Ngôn ngữ">
+                        <Segmented
+                          name="wiz-language"
+                          label="Ngôn ngữ"
+                          value={selectedLanguage}
+                          options={languageOptions.map((l) => ({
+                            value: l.languageId,
+                            label: l.label,
+                          }))}
+                          onChange={setSelectedLanguage}
+                        />
+                      </Field>
+                      <Field label="Giọng đọc">
+                        {voicesQuery.isPending ? (
+                          <div className="h-10 animate-pulse rounded-md bg-white/[0.06]" />
+                        ) : compatibleVoiceOptions.length > 0 ? (
+                          <Segmented
+                            name="wiz-voice"
+                            label="Giọng đọc"
+                            value={effectiveVoiceId}
+                            options={compatibleVoiceOptions.map((v) => ({
+                              value: v.voiceId,
+                              label: v.label,
+                            }))}
+                            onChange={setSelectedVoiceId}
+                          />
+                        ) : (
+                          <p className="flex h-10 items-center text-sm text-white/55">
+                            Chưa có giọng cho ngôn ngữ này.
+                          </p>
+                        )}
+                      </Field>
+                    </div>
+                    <ComposerActions
+                      pending={createSessionMutation.isPending}
+                      submitLabel="Bắt đầu session"
+                      pendingLabel="Đang khởi động…"
+                      aside={`Theo room: ${PROVIDER_LABEL[roomProvider(selectedRoom)]} · ${selectedRoom?.supportiveMode ? "Nhanh" : "Chuyên sâu"}`}
+                      onCancel={sessionsEmpty ? undefined : () => setSessionComposerOpen(false)}
+                    />
+                  </Composer>
+
+                  {sessionsQuery.isPending ? (
+                    <ListSkeleton leading={false} />
+                  ) : sessionsQuery.isError ? (
+                    <LoadError onRetry={() => sessionsQuery.refetch()} />
+                  ) : sessions.length > 0 ? (
+                    <ItemList>
+                      {sessions.map((session: RoomSessionSummary) => {
+                        const open = session.status !== "wrapped";
+                        const meta = [
+                          PHASE_LABEL[session.phaseKey] ?? session.phaseKey,
+                          formatRelativeTime(session.createdAt),
+                          session.briefStatus && session.briefStatus !== "confirmed"
+                            ? "Brief chưa chốt"
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ");
+                        return (
+                          <ItemRow
                             key={session.sessionId}
-                            tone="gold"
                             title={session.name}
-                            meta={`${session.phaseKey} · Provider: ${session.runtimeProvider ?? "claude"} · Brief: ${session.briefStatus === "confirmed" ? "đã xác nhận" : "đang khám phá"}`}
-                            badge={
-                              <span
-                                className={
-                                  session.status === "wrapped"
-                                    ? "rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-white/50"
-                                    : "rounded-full bg-[#22c55e]/15 px-2 py-0.5 text-[10px] font-semibold text-[#86efac]"
-                                }
-                              >
-                                {session.status === "wrapped" ? "ĐÃ WRAP" : "ĐANG MỞ"}
-                              </span>
+                            meta={meta}
+                            trailing={
+                              <Tag tone={open ? "live" : "neutral"}>
+                                {open ? "Đang mở" : "Đã kết thúc"}
+                              </Tag>
                             }
                             onClick={() =>
                               navigateWithTransition(
@@ -739,187 +1092,26 @@ export function OnboardingWizard() {
                               )
                             }
                           />
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-sm text-white/40">
-                        Chưa có session — bắt đầu session đầu tiên.
-                      </p>
-                    )}
-
-                    <ComposerToggle
-                      open={sessionComposerOpen}
-                      onOpen={() => setSessionComposerOpen(true)}
-                      label="Session mới"
-                    />
-
-                    {sessionComposerOpen ? (
-                      <form
-                        onSubmit={submitNewSession}
-                        className="flex flex-col gap-3.5 border-t border-white/8 pt-4"
-                      >
-                        <div className="flex flex-col gap-1.5">
-                          <Label
-                            htmlFor="wiz-topic"
-                            className="text-[11px] font-semibold tracking-[0.08em] text-white/45"
-                          >
-                            CHỦ ĐỀ BRAINSTORM
-                          </Label>
-                          <Input
-                            ref={sessionInputRef}
-                            id="wiz-topic"
-                            value={sessionTopic}
-                            onChange={(e) => setSessionTopic(e.target.value)}
-                            placeholder="vd. Làm sao giúp học sinh đọc nhiều hơn?"
-                            maxLength={200}
-                            className={engineInputClass}
-                          />
-                          <p className="text-[11px] leading-relaxed text-white/42">
-                            Chỉ cần nói chủ đề. Trong các lượt đầu, agent sẽ cùng bạn làm rõ mục
-                            tiêu, bối cảnh, ràng buộc, đối tượng và tiêu chí thành công.
-                          </p>
-                        </div>
-                        <div className="flex flex-col gap-1.5">
-                          <Label className="text-[11px] font-semibold tracking-[0.08em] text-white/45">
-                            GIỌNG ĐỌC
-                          </Label>
-                          <div className="flex gap-2">
-                            {compatibleVoiceOptions.map((voice) => (
-                              <button
-                                key={voice.voiceId}
-                                type="button"
-                                onClick={() => setSelectedVoiceId(voice.voiceId)}
-                                className={cn(
-                                  "flex-1 rounded-lg border px-3 py-2 text-[13px] font-medium transition-colors",
-                                  effectiveVoiceId === voice.voiceId
-                                    ? "border-[#fbbf24]/60 bg-[#fbbf24]/10 text-[#fde68a]"
-                                    : "border-white/12 text-white/50 hover:border-white/25 hover:text-white/75"
-                                )}
-                              >
-                                {voice.label}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="flex flex-col gap-1.5">
-                            <Label
-                              htmlFor="wiz-language"
-                              className="text-[11px] font-semibold tracking-[0.08em] text-white/45"
-                            >
-                              NGÔN NGỮ
-                            </Label>
-                            <select
-                              id="wiz-language"
-                              value={selectedLanguage}
-                              onChange={(e) =>
-                                setSelectedLanguage(e.target.value as BrainstormLanguage)
-                              }
-                              className="h-10 rounded-lg border border-white/12 bg-[#07111f] px-3 text-sm font-medium text-[#e0f2fe] outline-none transition-colors focus-visible:border-[#fbbf24] focus-visible:ring-2 focus-visible:ring-[#fbbf24]/30"
-                            >
-                              {languageOptions.map((language) => (
-                                <option key={language.languageId} value={language.languageId}>
-                                  {language.label}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                          <div className="flex flex-col justify-end gap-1.5 rounded-lg border border-white/10 bg-white/[0.025] px-3 py-2">
-                            <span className="text-[10px] font-semibold tracking-[0.08em] text-white/40">
-                              CONVERSATION CHÍNH
-                            </span>
-                            <span className="text-sm font-semibold text-[#a5f3fc]">
-                              {selectedRoom?.runtimeProvider ?? selectedRoom?.agent ?? "claude"}
-                            </span>
-                            <span className="text-[10px] leading-snug text-white/35">
-                              Provider được ghim ở room
-                            </span>
-                          </div>
-                        </div>
-                        <WizardSubmitRow
-                          pending={createSessionMutation.isPending}
-                          label="Bắt đầu session"
-                          onCancel={() => setSessionComposerOpen(false)}
-                          gold
-                        />
-                      </form>
-                    ) : null}
-                  </StepShell>
-                </motion.div>
+                        );
+                      })}
+                    </ItemList>
+                  ) : null}
+                </motion.section>
               )}
             </AnimatePresence>
 
             {stepError ? (
-              <p role="alert" className="mt-4 text-[13px] font-medium text-[#fdba74]">
-                {stepError}
-              </p>
+              <div
+                role="alert"
+                className="mt-4 flex items-start gap-2 rounded-md border border-[#ea580c]/30 bg-[#ea580c]/10 px-3 py-2.5 text-sm text-[#fdba74]"
+              >
+                <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
+                <span>{stepError}</span>
+              </div>
             ) : null}
-          </EngineCard>
-
-          {step > 1 ? (
-            <button
-              type="button"
-              onClick={() => goToStep((step - 1) as WizardStep)}
-              className="mt-4 text-xs font-medium text-white/35 hover:text-white/60"
-            >
-              ← Quay lại bước trước
-            </button>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function WizardSubmitRow({
-  pending,
-  label,
-  onCancel,
-  gold,
-}: {
-  pending: boolean;
-  label: string;
-  onCancel: () => void;
-  gold?: boolean;
-}) {
-  return (
-    <div className="flex items-center gap-3">
-      <button
-        type="submit"
-        disabled={pending}
-        className={cn(
-          "inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-          gold
-            ? "border-[#fbbf24]/50 text-[#fde68a] hover:bg-[#fbbf24]/10"
-            : "border-[#22d3ee]/50 text-[#e0f2fe] hover:bg-[#22d3ee]/10"
-        )}
-      >
-        {pending ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : null}
-        {label}
-      </button>
-      <button
-        type="button"
-        onClick={onCancel}
-        className="text-xs font-medium text-white/40 hover:text-white/70"
-      >
-        Huỷ
-      </button>
-    </div>
-  );
-}
-
-function ListSkeleton() {
-  return (
-    <div className="flex flex-col gap-2">
-      {[0, 1].map((i) => (
-        <div key={i} className="flex items-center gap-3.5 px-2.5 py-2.5">
-          <div
-            className="size-9 animate-pulse rounded-full bg-white/8"
-            style={{ animationDelay: `${i * 120}ms` }}
-          />
-          <div className="h-4 flex-1 animate-pulse rounded bg-white/8" />
-        </div>
-      ))}
+          </div>
+        </EngineCard>
+      </main>
     </div>
   );
 }

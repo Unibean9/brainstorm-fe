@@ -61,7 +61,7 @@ export default function RootLayout({
       className={`${openSans.variable} ${quicksand.variable}`}
       suppressHydrationWarning
     >
-      <body className="font-sans antialiased">
+      <body className="font-sans antialiased" suppressHydrationWarning>
         <RootJsonLd />
         <AppProviders>{children}</AppProviders>
       </body>

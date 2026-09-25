@@ -16,7 +16,6 @@ import {
   writeStoredSessionArtifacts,
   type StoredSessionArtifacts,
 } from "@/lib/brainstorm/artifact-storage";
-import { downloadArtifactsSequential } from "@/lib/brainstorm/download-artifact";
 import { BrainstormApiError, parseAxiosApiError } from "@/lib/brainstorm/parse-api-error";
 import type { ArtifactKey, BrainstormArtifactStatus } from "@/types/brainstorm-domain";
 import type { BrainstormSessionSnapshot } from "@/types/brainstorm-stream";
@@ -48,10 +47,8 @@ function canonicalArtifactUrls(sessionId: string, artifactKey: ArtifactKey) {
   const base = `/api/v1/brainstorm/sessions/${sessionId}`;
   if (artifactKey === "prd") return { prdUrl: `${base}/prd` };
   if (artifactKey === "landing-page") return { landingPageUrl: `${base}/landing-page` };
-  return {
-    pitchDeckHtmlUrl: `${base}/pitch-deck/html`,
-    pitchDeckExportUrl: `${base}/pitch-deck/pdf`,
-  };
+  // HTML only: the backend still renders a PDF, but the product only offers the HTML deck.
+  return { pitchDeckHtmlUrl: `${base}/pitch-deck/html` };
 }
 
 async function waitForArtifactState(
@@ -168,12 +165,6 @@ export function useBrainstormArtifacts({
         stored?.pitchDeckHtmlUrl ??
         metadataUrl(pitchStatus, ["htmlUrl", "pitchDeckHtmlUrl", "url"]) ??
         (pitchStatus?.status === "ready" ? canonicalPitchUrls?.pitchDeckHtmlUrl : undefined),
-      pitchDeckExportUrl:
-        stored?.pitchDeckExportUrl ??
-        metadataUrl(pitchStatus, ["exportUrl", "pitchDeckExportUrl"]) ??
-        (pitchStatus?.status === "ready" ? canonicalPitchUrls?.pitchDeckExportUrl : undefined),
-      speakerScriptUrl:
-        stored?.speakerScriptUrl ?? metadataUrl(pitchStatus, ["speakerScriptUrl", "scriptUrl"]),
     };
   }, [serverStatus, sessionId, stored]);
 
@@ -211,7 +202,7 @@ export function useBrainstormArtifacts({
           ? urls.prdUrl
           : artifactKey === "landing-page"
             ? urls.landingPageUrl
-            : urls.pitchDeckHtmlUrl || urls.pitchDeckExportUrl;
+            : urls.pitchDeckHtmlUrl;
       const base =
         mutationStates[artifactKey] || local?.status === "generating"
           ? { artifactKey, status: "generating" as const }
@@ -231,6 +222,15 @@ export function useBrainstormArtifacts({
     (status) => status?.status === "generating"
   );
   const canGenerate = isWrapped && Boolean(sessionId) && !isBusy && !hasServerGenerating;
+  // Outputs are built in order, PRD → landing page → pitch deck. Enforced here in the UI only;
+  // the backend still accepts any order.
+  const isReady = (key: ArtifactKey) =>
+    generationState.some((status) => status.artifactKey === key && status.status === "ready");
+  const prdReady = isReady("prd");
+  const landingReady = isReady("landing-page");
+  const canGeneratePrd = canGenerate;
+  const canGenerateLanding = canGenerate && prdReady;
+  const canGeneratePitch = canGenerate && landingReady;
 
   const setGenerating = useCallback((artifactKey: ArtifactKey) => {
     setLocalStatuses((current) => ({
@@ -262,7 +262,7 @@ export function useBrainstormArtifacts({
   );
 
   const createPrd = useCallback(async () => {
-    if (!sessionId || !canGenerate) return;
+    if (!sessionId || !canGeneratePrd) return;
     setPrdError(null);
     setGenerating("prd");
     try {
@@ -271,8 +271,8 @@ export function useBrainstormArtifacts({
         ...current,
         prd: { artifactKey: "prd", status: "ready" },
       }));
+      // No auto-download: the row turns "ready" and offers its own download action.
       persist({ prdUrl: data.prdUrl, prdGeneratedAt: data.generatedAt });
-      void downloadArtifactsSequential([{ path: data.prdUrl, filename: "brainstorm-prd.md" }]);
     } catch (err) {
       if (shouldReconcileArtifactError(err)) {
         const recovered = await recoverArtifact("prd");
@@ -291,10 +291,10 @@ export function useBrainstormArtifacts({
       setFailed("prd", message);
       setPrdError(message);
     }
-  }, [canGenerate, persist, prdMutation, recoverArtifact, sessionId, setFailed, setGenerating]);
+  }, [canGeneratePrd, persist, prdMutation, recoverArtifact, sessionId, setFailed, setGenerating]);
 
   const createLandingPage = useCallback(async () => {
-    if (!sessionId || !canGenerate) return;
+    if (!sessionId || !canGenerateLanding) return;
     setLandingError(null);
     setGenerating("landing-page");
     try {
@@ -308,9 +308,6 @@ export function useBrainstormArtifacts({
         },
       }));
       persist({ landingPageUrl: data.landingPageUrl, landingWarnings: data.warnings });
-      void downloadArtifactsSequential([
-        { path: data.landingPageUrl, filename: "landing-page.html" },
-      ]);
     } catch (err) {
       if (shouldReconcileArtifactError(err)) {
         const recovered = await recoverArtifact("landing-page");
@@ -329,10 +326,10 @@ export function useBrainstormArtifacts({
       setFailed("landing-page", message);
       setLandingError(message);
     }
-  }, [canGenerate, landingMutation, persist, recoverArtifact, sessionId, setFailed, setGenerating]);
+  }, [canGenerateLanding, landingMutation, persist, recoverArtifact, sessionId, setFailed, setGenerating]);
 
   const createPitchDeck = useCallback(async () => {
-    if (!sessionId || !canGenerate) return;
+    if (!sessionId || !canGeneratePitch) return;
     setPitchError(null);
     setGenerating("pitch-deck");
     try {
@@ -341,16 +338,7 @@ export function useBrainstormArtifacts({
         ...current,
         "pitch-deck": { artifactKey: "pitch-deck", status: "ready", warnings: data.warnings },
       }));
-      persist({
-        pitchDeckHtmlUrl: data.htmlUrl,
-        pitchDeckExportUrl: data.exportUrl,
-        speakerScriptUrl: data.speakerScriptUrl,
-        pitchWarnings: data.warnings,
-      });
-      void downloadArtifactsSequential([
-        { path: data.htmlUrl, filename: "pitch-deck.html" },
-        { path: data.exportUrl, filename: "pitch-deck.pdf" },
-      ]);
+      persist({ pitchDeckHtmlUrl: data.htmlUrl, pitchWarnings: data.warnings });
     } catch (err) {
       if (shouldReconcileArtifactError(err)) {
         const recovered = await recoverArtifact("pitch-deck");
@@ -369,7 +357,7 @@ export function useBrainstormArtifacts({
       setFailed("pitch-deck", message);
       setPitchError(message);
     }
-  }, [canGenerate, persist, pitchMutation, recoverArtifact, sessionId, setFailed, setGenerating]);
+  }, [canGeneratePitch, persist, pitchMutation, recoverArtifact, sessionId, setFailed, setGenerating]);
 
   const errors = useMemo(
     () => ({ prd: prdError, "landing-page": landingError, "pitch-deck": pitchError }),
@@ -379,17 +367,15 @@ export function useBrainstormArtifacts({
   return {
     isWrapped,
     isBusy,
-    canGeneratePrd: canGenerate,
-    canGenerateLanding: canGenerate,
-    canGeneratePitch: canGenerate,
+    canGeneratePrd,
+    canGenerateLanding,
+    canGeneratePitch,
     artifactStatuses: generationState,
     prdUrl: urls.prdUrl,
     prdGeneratedAt: stored?.prdGeneratedAt,
     landingPageUrl: urls.landingPageUrl,
     landingWarnings: stored?.landingWarnings ?? serverStatus["landing-page"]?.warnings,
     pitchDeckHtmlUrl: urls.pitchDeckHtmlUrl,
-    pitchDeckExportUrl: urls.pitchDeckExportUrl,
-    speakerScriptUrl: urls.speakerScriptUrl,
     pitchWarnings: stored?.pitchWarnings ?? serverStatus["pitch-deck"]?.warnings,
     prdError:
       serverStatus.prd?.status === "ready"
@@ -407,10 +393,11 @@ export function useBrainstormArtifacts({
         : (errors["pitch-deck"] ??
           (localStatuses["pitch-deck"]?.error as string | undefined) ??
           null),
-    prdHint: !isWrapped
-      ? "Output mở sau khi conversation hoàn tất."
-      : isBusy
-        ? "Đang xử lý — output sẽ cập nhật khi server hoàn tất."
+    /** Why nothing can be generated right now (null when generation is open). */
+    blockedReason: !isWrapped
+      ? "Kết thúc session để tạo output."
+      : isBusy || hasServerGenerating
+        ? "Đang có output được tạo, chờ xong rồi tạo tiếp."
         : null,
     isPrdPending: prdMutation.isPending || localStatuses.prd?.status === "generating",
     isLandingPending:
