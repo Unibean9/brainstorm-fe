@@ -29,9 +29,9 @@ import apiService from "../core";
 const BASE = "api/v1/brainstorm/sessions";
 
 /**
- * Artifact routes may run for up to 15 minutes on the server (including retries and
- * layout measurement). The request is intentionally bounded below that ceiling so a
- * proxy disconnect hands control to snapshot reconciliation instead of trapping the UI.
+ * Artifact routes may run for up to 20 minutes on the server (including retries and
+ * layout measurement). Edge proxies can still return HTTP 524 before that; the artifact
+ * hook then reconciles the server-owned status instead of treating the request as failed.
  */
 // The browser may be talking through a proxy with a shorter request budget.
 // After this point the hook switches to snapshot reconciliation instead of
@@ -93,7 +93,7 @@ export const brainstormSessionApi = {
   /** Artifact có thể tạo ở mọi phase; backend chỉ từ chối khi turn đang chạy/chưa đủ source. */
   createPrd: async (sessionId: string): Promise<BrainstormPrdResponse> => {
     const response = await apiService.post<ApiResponse<BrainstormPrdResponse>>(
-      `${BASE}/${sessionId}/prd`,
+      `${BASE}/${sessionId}/prd?async=true`,
       {},
       { ...withTeacherHeader(), timeout: ARTIFACT_REQUEST_TIMEOUT_MS }
     );

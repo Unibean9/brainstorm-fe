@@ -79,7 +79,14 @@ function formatArtifactError(err: unknown) {
 
 function shouldReconcileArtifactError(err: unknown) {
   const parsed = err instanceof BrainstormApiError ? err : parseAxiosApiError(err);
-  return Boolean(parsed.isTimeout || parsed.isNetworkError || parsed.code === "room_busy");
+  // Cloudflare and similar edge proxies can close a long-running request with
+  // 524 even though the origin is still generating the artifact.
+  return Boolean(
+    parsed.isTimeout ||
+      parsed.isNetworkError ||
+      parsed.status === 524 ||
+      parsed.code === "room_busy"
+  );
 }
 
 function metadataUrl(status: BrainstormArtifactStatus | undefined, keys: string[]) {
@@ -267,6 +274,15 @@ export function useBrainstormArtifacts({
     setGenerating("prd");
     try {
       const data = await prdMutation.mutateAsync({ sessionId });
+      // Async PRD: the server accepted the job and keeps generating; poll its status.
+      if ("status" in data) {
+        const recovered = await recoverArtifact("prd");
+        if (recovered === "ready") return;
+        const message = recovered === "failed" ? ERROR_COPY.prd_failed : TIMEOUT_STILL_PENDING_COPY;
+        setFailed("prd", message);
+        setPrdError(message);
+        return;
+      }
       setLocalStatuses((current) => ({
         ...current,
         prd: { artifactKey: "prd", status: "ready" },
