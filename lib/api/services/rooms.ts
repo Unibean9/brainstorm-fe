@@ -2,6 +2,7 @@ import type { ApiResponse } from "@/types/api";
 import type {
   CreateRoomRequest,
   CreateRoomSessionRequest,
+  DeletionCounts,
   Room,
   RoomSessionSummary,
 } from "@/types/brainstorm-domain";
@@ -56,4 +57,27 @@ export const roomsApi = {
     );
     return response.data.data;
   },
+
+  /** Header bắt buộc. Xoá room kèm mọi session trong room. */
+  remove: (roomId: string) => deleteWithTeacher(`${BASE}/${roomId}`),
+
+  /** Header bắt buộc. Xoá mọi room trên instance (kèm session). */
+  removeAll: () => deleteWithTeacher(BASE),
+
+  /** Header bắt buộc. */
+  removeSession: (sessionId: string) =>
+    deleteWithTeacher(`api/v1/brainstorm/sessions/${sessionId}`),
+
+  /** Header bắt buộc. Xoá mọi session trong room, giữ lại room. */
+  removeAllSessions: (roomId: string) => deleteWithTeacher(`${BASE}/${roomId}/sessions`),
 };
+
+// apiService.delete takes no request config, so the teacher header goes through request().
+async function deleteWithTeacher(url: string): Promise<DeletionCounts> {
+  const response = await apiService.request<ApiResponse<{ deleted: DeletionCounts }>>({
+    ...withTeacherHeader(),
+    method: "DELETE",
+    url,
+  });
+  return response.data.data.deleted;
+}

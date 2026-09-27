@@ -11,11 +11,20 @@ import {
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { AlertCircle, Check, ChevronRight, Loader2, Plus } from "lucide-react";
+import { AlertCircle, Check, ChevronRight, Loader2, Plus, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 
 import { PHASES } from "@/app/session/components/room-phase-rail";
 import { EngineAmbientBg } from "@/components/brainstorm/engine-ambient-bg";
 import { EngineCard } from "@/components/brainstorm/engine-card";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { teachersApi } from "@/lib/api/services/teachers";
 import { roomsApi } from "@/lib/api/services/rooms";
@@ -36,6 +45,7 @@ import { cn } from "@/lib/utils";
 import type {
   RuntimeProvider,
   BrainstormLanguage,
+  DeletionCounts,
   Room,
   RoomSessionSummary,
   TeacherDirectoryEntry,
@@ -432,6 +442,24 @@ function ComposerActions({
   );
 }
 
+/** Quiet destructive action for a whole list; the confirm dialog carries the weight. */
+function DeleteAllButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium text-white/55",
+        "transition-colors duration-150 hover:bg-[#f87171]/10 hover:text-[#fca5a5]",
+        "outline-none focus-visible:ring-2 focus-visible:ring-[#f87171]/50"
+      )}
+    >
+      <Trash2 className="size-3.5" aria-hidden />
+      Xoá tất cả
+    </button>
+  );
+}
+
 function ItemList({ children }: { children: ReactNode }) {
   return (
     <ul role="list" className="-mx-2 flex max-h-[min(22rem,48vh)] flex-col overflow-y-auto">
@@ -446,6 +474,8 @@ function ItemRow({
   meta,
   trailing,
   onClick,
+  onDelete,
+  deleteLabel,
   pending,
   disabled,
 }: {
@@ -454,18 +484,21 @@ function ItemRow({
   meta?: ReactNode;
   trailing?: ReactNode;
   onClick: () => void;
+  /** Renders a trash button beside the row (a sibling, since buttons cannot nest). */
+  onDelete?: () => void;
+  deleteLabel?: string;
   pending?: boolean;
   disabled?: boolean;
 }) {
   return (
-    <li>
+    <li className="group/row flex items-center gap-1">
       <button
         type="button"
         onClick={onClick}
         disabled={disabled}
         aria-busy={pending || undefined}
         className={cn(
-          "group flex w-full items-center gap-3 rounded-md px-2 py-2.5 text-left",
+          "group flex min-w-0 flex-1 items-center gap-3 rounded-md px-2 py-2.5 text-left",
           "outline-none transition-colors duration-150 hover:bg-white/[0.05]",
           "focus-visible:bg-white/[0.05] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#67e8f9]/50",
           "disabled:cursor-default disabled:hover:bg-transparent"
@@ -486,7 +519,87 @@ function ItemRow({
           />
         )}
       </button>
+      {onDelete ? (
+        <button
+          type="button"
+          onClick={onDelete}
+          disabled={disabled}
+          aria-label={deleteLabel ?? "Xoá"}
+          title={deleteLabel ?? "Xoá"}
+          className={cn(
+            "grid size-9 shrink-0 place-items-center rounded-md text-white/35",
+            "transition-[color,background-color,opacity] duration-150 hover:bg-[#f87171]/10 hover:text-[#fca5a5]",
+            "outline-none focus-visible:ring-2 focus-visible:ring-[#f87171]/50",
+            // Quiet until the row is hovered or focused; always visible where there is no hover.
+            "[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:focus-visible:opacity-100",
+            "disabled:pointer-events-none disabled:opacity-40"
+          )}
+        >
+          <Trash2 className="size-4" aria-hidden />
+        </button>
+      ) : null}
     </li>
+  );
+}
+
+type PendingDelete = {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  run: () => Promise<DeletionCounts>;
+};
+
+function describeCounts({ teachers, rooms, sessions }: DeletionCounts): string {
+  return [
+    teachers ? `${teachers} giáo viên` : null,
+    rooms ? `${rooms} room` : null,
+    sessions ? `${sessions} session` : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
+function ConfirmDeleteDialog({
+  pending,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  pending: PendingDelete | null;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <AlertDialog open={pending !== null} onOpenChange={(open) => !open && !busy && onCancel()}>
+      <AlertDialogContent className="border border-white/10 bg-[#0b1627] text-[#e0f2fe] ring-0 sm:max-w-md">
+        <AlertDialogHeader>
+          <AlertDialogTitle className="text-base font-semibold text-white">
+            {pending?.title}
+          </AlertDialogTitle>
+          <AlertDialogDescription className="text-left text-sm leading-relaxed text-white/70">
+            {pending?.description} Không hoàn tác được.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter className="border-white/10 bg-white/[0.03]">
+          <GhostButton onClick={onCancel}>Huỷ</GhostButton>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={busy}
+            className={cn(
+              "inline-flex h-9 items-center justify-center gap-2 rounded-full border border-[#f87171]/50 bg-[#f87171]/15 px-4",
+              "text-sm font-semibold text-[#fecaca] transition-colors duration-150 hover:bg-[#f87171]/25",
+              "outline-none focus-visible:ring-2 focus-visible:ring-[#f87171]/60",
+              "disabled:cursor-not-allowed disabled:opacity-60"
+            )}
+          >
+            {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+            {busy ? "Đang xoá…" : pending?.confirmLabel}
+          </button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -714,6 +827,29 @@ export function OnboardingWizard() {
     },
   });
 
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+
+  const deleteMutation = useMutation({
+    mutationFn: (target: PendingDelete) => target.run(),
+    onSuccess: (counts) => {
+      setPendingDelete(null);
+      setStepError(null);
+      const summary = describeCounts(counts);
+      toast.success(summary ? `Đã xoá ${summary}.` : "Không còn gì để xoá.");
+    },
+    onError: (err) => {
+      const apiErr = parseAxiosApiError(err);
+      setPendingDelete(null);
+      setStepError(
+        apiErr.code === "resource_busy"
+          ? "Có session đang chạy lượt chat hoặc đang tạo PRD/landing/deck. Đợi xong rồi xoá lại."
+          : "Chưa xoá được. Kiểm tra backend rồi thử lại."
+      );
+    },
+    // Teachers, rooms, and sessions all live under the "brainstorm" key; a cascade touches any of them.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: brainstormKeys.all }),
+  });
+
   const selectTeacher = (entry: TeacherDirectoryEntry) => {
     setStepError(null);
     setPendingCode(entry.code);
@@ -822,9 +958,22 @@ export function OnboardingWizard() {
                     }
                     action={
                       !teacherFormOpen && teachersQuery.isSuccess ? (
-                        <NewButton onClick={() => setTeacherComposerOpen(true)}>
-                          Giáo viên mới
-                        </NewButton>
+                        <div className="flex items-center gap-1">
+                          <DeleteAllButton
+                            onClick={() =>
+                              setPendingDelete({
+                                title: `Xoá tất cả ${teachersQuery.data.length} giáo viên?`,
+                                description:
+                                  "Mọi giáo viên trên máy này sẽ bị xoá, kèm toàn bộ room, session và file PRD/landing/deck.",
+                                confirmLabel: "Xoá tất cả",
+                                run: teachersApi.removeAll,
+                              })
+                            }
+                          />
+                          <NewButton onClick={() => setTeacherComposerOpen(true)}>
+                            Giáo viên mới
+                          </NewButton>
+                        </div>
                       ) : null
                     }
                   />
@@ -884,6 +1033,15 @@ export function OnboardingWizard() {
                           pending={registerTeacherMutation.isPending && pendingCode === t.code}
                           disabled={registerTeacherMutation.isPending}
                           onClick={() => selectTeacher(t)}
+                          deleteLabel={`Xoá giáo viên ${t.name}`}
+                          onDelete={() =>
+                            setPendingDelete({
+                              title: `Xoá giáo viên “${t.name}”?`,
+                              description: `Xoá ${t.name} (${t.code}) kèm mọi room họ sở hữu và mọi session họ đã tạo.`,
+                              confirmLabel: "Xoá giáo viên",
+                              run: () => teachersApi.remove(t.teacherId),
+                            })
+                          }
                         />
                       ))}
                     </ItemList>
@@ -901,7 +1059,20 @@ export function OnboardingWizard() {
                     }
                     action={
                       !roomFormOpen && roomsQuery.isSuccess ? (
-                        <NewButton onClick={() => setRoomComposerOpen(true)}>Room mới</NewButton>
+                        <div className="flex items-center gap-1">
+                          <DeleteAllButton
+                            onClick={() =>
+                              setPendingDelete({
+                                title: `Xoá tất cả ${roomsQuery.data.length} room?`,
+                                description:
+                                  "Mọi room trên máy này sẽ bị xoá, của tất cả giáo viên, kèm toàn bộ session và file PRD/landing/deck bên trong. Giáo viên vẫn được giữ lại.",
+                                confirmLabel: "Xoá tất cả",
+                                run: roomsApi.removeAll,
+                              })
+                            }
+                          />
+                          <NewButton onClick={() => setRoomComposerOpen(true)}>Room mới</NewButton>
+                        </div>
                       ) : null
                     }
                   />
@@ -974,6 +1145,15 @@ export function OnboardingWizard() {
                               setSelectedRuntimeProvider("codex");
                               setManualStep(3);
                             }}
+                            deleteLabel={`Xoá room ${room.name}`}
+                            onDelete={() =>
+                              setPendingDelete({
+                                title: `Xoá room “${room.name}”?`,
+                                description: `Room của ${mine ? "bạn" : (room.ownerName ?? "giáo viên khác")} sẽ bị xoá kèm mọi session và file PRD/landing/deck bên trong.`,
+                                confirmLabel: "Xoá room",
+                                run: () => roomsApi.remove(room.roomId),
+                              })
+                            }
                           />
                         );
                       })}
@@ -992,9 +1172,21 @@ export function OnboardingWizard() {
                     }
                     action={
                       !sessionFormOpen && sessionsQuery.isSuccess ? (
-                        <NewButton onClick={() => setSessionComposerOpen(true)}>
-                          Session mới
-                        </NewButton>
+                        <div className="flex items-center gap-1">
+                          <DeleteAllButton
+                            onClick={() =>
+                              setPendingDelete({
+                                title: `Xoá tất cả ${sessionsQuery.data.length} session trong room?`,
+                                description: `Mọi session trong room “${selectedRoom?.name}” sẽ bị xoá kèm file PRD/landing/deck. Room vẫn được giữ lại.`,
+                                confirmLabel: "Xoá tất cả",
+                                run: () => roomsApi.removeAllSessions(selectedRoom!.roomId),
+                              })
+                            }
+                          />
+                          <NewButton onClick={() => setSessionComposerOpen(true)}>
+                            Session mới
+                          </NewButton>
+                        </div>
                       ) : null
                     }
                   />
@@ -1091,6 +1283,16 @@ export function OnboardingWizard() {
                                 `/rooms/${selectedRoom!.roomId}/sessions/${session.sessionId}`
                               )
                             }
+                            deleteLabel={`Xoá session ${session.name}`}
+                            onDelete={() =>
+                              setPendingDelete({
+                                title: `Xoá session “${session.name}”?`,
+                                description:
+                                  "Toàn bộ lượt chat, brief và file PRD/landing/deck của session này sẽ bị xoá.",
+                                confirmLabel: "Xoá session",
+                                run: () => roomsApi.removeSession(session.sessionId),
+                              })
+                            }
                           />
                         );
                       })}
@@ -1112,6 +1314,13 @@ export function OnboardingWizard() {
           </div>
         </EngineCard>
       </main>
+
+      <ConfirmDeleteDialog
+        pending={pendingDelete}
+        busy={deleteMutation.isPending}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => pendingDelete && deleteMutation.mutate(pendingDelete)}
+      />
     </div>
   );
 }

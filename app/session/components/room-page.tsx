@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Mic, MessageCircle, PenTool } from "lucide-react";
 
@@ -14,6 +14,8 @@ import { useBrainstormArtifacts } from "@/hooks/useBrainstormArtifacts";
 import { cn } from "@/lib/utils";
 
 import { roomsApi } from "@/lib/api/services/rooms";
+import { brainstormSessionApi } from "@/lib/api/services/brainstormSession";
+import { parseAxiosApiError } from "@/lib/brainstorm/parse-api-error";
 import { brainstormKeys } from "@/lib/brainstorm/brainstorm-query-keys";
 import { formatTurnErrorCode } from "@/lib/brainstorm/turn-error-copy";
 import { navigateWithTransition } from "@/lib/motion/navigate-with-transition";
@@ -40,6 +42,7 @@ import {
 import { RoomStandbyGate } from "./room-standby-gate";
 import { RoomVoiceStatus } from "./room-voice-status";
 import { RoomArtifactActions } from "./room-artifact-actions";
+import { RoomEndSession } from "./room-end-session";
 import { RoomWhiteboard } from "./room-whiteboard";
 import { SessionStatusHud } from "./session-status-hud";
 
@@ -308,6 +311,35 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
   const orbHit = Math.max(72, layout.coreR * 2.2);
   const chatBusy = isSessionWrapped || state === "processing" || state === "agent-speaking";
 
+  // The model can no longer close a session, so the teacher ends it here. POST /complete is
+  // rejected while a turn runs; locallyCompleted unlocks outputs without waiting on a refetch.
+  const queryClient = useQueryClient();
+  const completeMutation = useMutation({
+    mutationFn: () => brainstormSessionApi.complete(sessionId),
+    onSuccess: () => {
+      setLocallyCompleted(true);
+      void queryClient.invalidateQueries({ queryKey: brainstormKeys.session(sessionId) });
+      void queryClient.invalidateQueries({ queryKey: brainstormKeys.roomSessions(roomId) });
+    },
+  });
+  const completeError = completeMutation.isError
+    ? parseAxiosApiError(completeMutation.error).code === "turn_in_progress"
+      ? "Agent vẫn đang trả lời. Đợi xong rồi kết thúc."
+      : "Chưa kết thúc được session. Thử lại."
+    : null;
+  // Live signal from the last turn, plus the persisted phase so the hint survives a reload.
+  const wrapSuggested =
+    advisory?.completion?.suggested === true || sessionPhaseKey === "wrap-up";
+  const endSession = (
+    <RoomEndSession
+      suggested={wrapSuggested}
+      canComplete={!chatBusy && !isTurnPending}
+      isCompleting={completeMutation.isPending}
+      error={completeError}
+      onComplete={() => completeMutation.mutate()}
+    />
+  );
+
   const closeChat = useCallback(() => {
     setChatOpen(false);
   }, []);
@@ -536,7 +568,12 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
 
       <AnimatePresence>
         {sessionStarted && chatOpen ? (
-          <RoomSessionChat key="session-chat" entries={transcript} candidates={candidates} />
+          <RoomSessionChat
+            key="session-chat"
+            entries={transcript}
+            candidates={candidates}
+            dockAction={!isSessionWrapped}
+          />
         ) : null}
       </AnimatePresence>
 
@@ -659,6 +696,7 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
                     <div aria-hidden />
                     <div className={CHAT_STAGE_COLUMN}>
                       <div className={CHAT_STAGE_INNER}>
+                        <div className="mb-2.5 flex justify-center">{endSession}</div>
                         <RoomChatBar
                           variant="session"
                           autoFocus
@@ -717,7 +755,10 @@ export function RoomPage({ sessionId, roomId }: RoomPageProps) {
                       </div>
                     </motion.div>
 
-                    <RoomVoiceStatus state={state} micActive={micActive} />
+                    <div className="flex flex-col items-center gap-3">
+                      <RoomVoiceStatus state={state} micActive={micActive} />
+                      {endSession}
+                    </div>
 
                     <motion.div
                       className="absolute bottom-0 right-0"

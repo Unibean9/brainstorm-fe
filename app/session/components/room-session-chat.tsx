@@ -11,6 +11,8 @@ import type { AutonomousIdeationCandidate } from "@/types/brainstorm-domain";
 type RoomSessionChatProps = {
   entries: TranscriptEntry[];
   candidates?: AutonomousIdeationCandidate[];
+  /** True while the live dock shows the end-session action above the chat input. */
+  dockAction?: boolean;
 };
 
 const PANEL = { duration: 0.72, ease: [0.16, 1, 0.3, 1] as const };
@@ -28,14 +30,20 @@ export const CHAT_STAGE_INNER = "mx-auto w-full max-w-lg sm:max-w-xl lg:max-w-2x
  * chat đóng/mở) · chừa chỗ orb ở giữa (orb đứng yên tại vị trí home) · khung
  * chat phải. Input nằm ở dock dưới (RoomChatBar).
  */
-export function RoomSessionChat({ entries, candidates = [] }: RoomSessionChatProps) {
+export function RoomSessionChat({
+  entries,
+  candidates = [],
+  dockAction = false,
+}: RoomSessionChatProps) {
   const reduceMotion = useReducedMotion();
   const t = reduceMotion ? { duration: 0 } : PANEL;
 
   return (
     <motion.div
       className={cn(
-        "pointer-events-auto absolute inset-0 z-30 pt-52 pb-28 sm:pt-60",
+        "pointer-events-auto absolute inset-0 z-30 pt-52 sm:pt-60",
+        // The live dock stacks the end-session action above the input; keep the last message clear of it.
+        dockAction ? "pb-44" : "pb-28",
         CHAT_STAGE_GRID
       )}
       initial={reduceMotion ? false : { opacity: 0 }}

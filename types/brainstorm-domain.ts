@@ -8,9 +8,17 @@ export type Teacher = {
 };
 
 export type TeacherDirectoryEntry = {
+  teacherId: string;
   code: string;
   name: string;
   createdAt: string;
+};
+
+/** Counts returned by every DELETE route; deletes cascade teacher → rooms → sessions. */
+export type DeletionCounts = {
+  teachers: number;
+  rooms: number;
+  sessions: number;
 };
 
 export type CreateTeacherRequest = {
