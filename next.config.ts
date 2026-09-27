@@ -4,6 +4,8 @@ const brainstormApiProxy =
   process.env.BRAINSTORM_API_PROXY?.replace(/\/$/, "") ?? "http://127.0.0.1:3001";
 
 const nextConfig: NextConfig = {
+  // Claude turns often exceed Next's default 30s proxy timeout, which cut the SSE stream mid-turn.
+  experimental: { proxyTimeout: 120_000 },
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "images.unsplash.com" },
